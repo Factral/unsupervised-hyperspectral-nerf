@@ -14,30 +14,37 @@ from nerfstudio.engine.schedulers import (
 )
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
+from nerfstudio.plugins.registry_dataparser import DataParserSpecification
 
+from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig
 
-from method_template.template_datamanager import (
-    TemplateDataManagerConfig,
+from umhsnerf.data.umhs_datamanager import (
+    UMHSDataManagerConfig, UMHSDataManager
 )
-from method_template.template_model import TemplateModelConfig
-from method_template.template_pipeline import (
-    TemplatePipelineConfig,
+from umhsnerf.umhs_model import UMHSConfig
+from umhsnerf.umhs_pipeline import (
+    UMHSPipelineConfig,
 )
+from umhsnerf.data.umhs_dataparser import UMHSDataParserConfig
 
-method_template = MethodSpecification(
+from umhsnerf.data.utils.hs_dataloader import HyperspectralDataset
+
+umhs_method = MethodSpecification(
     config=TrainerConfig(
-        method_name="umsnerf",  # TODO: rename to your own model
+        method_name="umhsnerf",
         steps_per_eval_batch=500,
         steps_per_save=2000,
         max_num_iterations=30000,
         mixed_precision=True,
-        pipeline=TemplatePipelineConfig(
-            datamanager=TemplateDataManagerConfig(
-                dataparser=NerfstudioDataParserConfig(),
-                train_num_rays_per_batch=4096,
+        pipeline=VanillaPipelineConfig(
+            datamanager=UMHSDataManagerConfig(
+                _target=UMHSDataManager[HyperspectralDataset],
+                dataparser=UMHSDataParserConfig(),
+                train_num_rays_per_batch=4096*2,
                 eval_num_rays_per_batch=4096,
             ),
-            model=TemplateModelConfig(
+            model=UMHSConfig(
                 eval_num_rays_per_chunk=1 << 15,
                 average_init_density=0.01,
             ),

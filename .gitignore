@@ -1,4 +1,15 @@
 outputs/
+data/basil/*
+data/dcgm/*
+data/nerfstudio/*
+data/nespof/*
+data/output/*
+data/transforms_test.json
+data/transforms.json
+data/spec_to_rgb.csv
+
+dcgm/*
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
