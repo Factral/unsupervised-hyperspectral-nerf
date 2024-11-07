@@ -7,7 +7,9 @@ data/output/*
 data/transforms_test.json
 data/transforms.json
 data/spec_to_rgb.csv
+data/ajar_adapted/*
 
+features/*
 dcgm/*
 
 

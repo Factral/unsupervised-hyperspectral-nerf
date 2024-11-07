@@ -141,7 +141,7 @@ def read_exr_as_stokes(fn):
 wave_to_rgb = pd.read_csv("spec_to_rgb.csv")
 
 def color_mapping(PATH, FIG_OUTPATH, OBJECT, wavelength, FILE, scalar=1, s123_min=-1, s123_max=1):
-    img_path = f"{PATH}/{OBJECT}/{wavelength}/val/{FILE}"
+    img_path = f"{PATH}/{OBJECT}/{wavelength}/train/{FILE}"
     
     stokes = read_exr_as_stokes(img_path)    
     H, W = stokes.shape[:2]
@@ -157,20 +157,20 @@ def color_mapping(PATH, FIG_OUTPATH, OBJECT, wavelength, FILE, scalar=1, s123_mi
     plt.show()
     return s
 
-FIG_OUTPATH='./output'
+FIG_OUTPATH='./ajar_adapted'
 PATH = './nespof'    # directly accessing remote notework seems to take long time. better to use a local path 
 wvls = np.arange(450, 650+1, 10)
 
 
 idxs = list(range(54))
-idxs =  [0,8,16,24,32,40,48]
-#idxs = [i for i in idxs if i not in remove_idx]
+remove_idx =  [0,8,16,24,32,40,48] # remove_idx
+idxs = [i for i in idxs if i not in remove_idx]
 
 for k in idxs:
     cube = np.zeros((512, 512, len(wvls)))
     for i, wvl in enumerate(wvls):
         print(f'processing wavelength {wvl}')
-        s = color_mapping(PATH, FIG_OUTPATH, "cbox_dragon", wvl, f"r_{k}.exr")
+        s = color_mapping(PATH, FIG_OUTPATH, "ajar/ajar", wvl, f"r_{k}.exr")
         cube[..., i] = s
 
     print(cube.shape)
@@ -188,7 +188,7 @@ for k in idxs:
 
     cube=cube.clip(0, 1)
 
-    np.save(f"{FIG_OUTPATH}/eval/r_{k}.npy", cube)
+    np.save(f"{FIG_OUTPATH}/train/r_{k}.npy", cube)
 
     print(cube.max(), cube.min())
     print(rgb_array_normalized.max(), rgb_array_normalized.min())
@@ -200,7 +200,7 @@ for k in idxs:
     plt.figure()
     plt.imshow(try1)
     plt.show()
-    cv2.imwrite(f"{FIG_OUTPATH}/eval/r_{k}.png", try1[:,:,::-1]*255)
+    cv2.imwrite(f"{FIG_OUTPATH}/train/r_{k}.png", try1[:,:,::-1]*255)
 
 
     rgb = cube @ rgb_array_normalized
@@ -209,4 +209,4 @@ for k in idxs:
     plt.figure()
     plt.imshow(rgb)
     plt.show()
-    cv2.imwrite(f"{FIG_OUTPATH}/eval/r_{k}_bad.png", rgb[:,:,::-1]*255)
+    cv2.imwrite(f"{FIG_OUTPATH}/train/r_{k}_bad.png", rgb[:,:,::-1]*255)

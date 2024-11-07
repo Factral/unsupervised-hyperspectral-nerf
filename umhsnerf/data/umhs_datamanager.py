@@ -11,7 +11,6 @@ import torch
 from typing import (
     Any,
     Callable,
-    Dict,
     ForwardRef,
     Generic,
     List,
@@ -25,6 +24,9 @@ from typing import (
     get_origin,
 )
 
+from pathlib import Path
+import os.path as osp
+
 from nerfstudio.utils.misc import IterableWrapper, get_orig_class
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.cameras.rays import RayBundle
@@ -32,12 +34,15 @@ from nerfstudio.data.datamanagers.base_datamanager import (
     VanillaDataManager,
     VanillaDataManagerConfig,
 )
+
+from nerfstudio.cameras.cameras import Cameras, CameraType
+from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
+from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler, PixelSamplerConfig
+from functools import cached_property
 
 from umhsnerf.data.umhs_dataparser import UMHSDataParserConfig
-
-from nerfstudio.utils.rich_utils import CONSOLE
-from functools import cached_property
+from umhsnerf.data.utils.dino_dataloader import DinoDataloader
 
 
 CustomDataParserUnion = Union[UMHSDataParserConfig, AnnotatedDataParserUnion]
@@ -52,9 +57,11 @@ class UMHSDataManagerConfig(VanillaDataManagerConfig):
     _target: Type = field(default_factory=lambda: UMHSDataManager)
     dataparser: AnnotatedDataParserUnion = field(default_factory=UMHSDataParserConfig)
 
+    patch_size: int = 96
+
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 
-
+ 
 class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
     """UMHS DataManager
 
@@ -77,6 +84,20 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
             config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, **kwargs
         )
 
+        images = [self.train_dataset[i]["image"].permute(2, 0, 1)[None, ...] for i in range(len(self.train_dataset))]
+        images = torch.cat(images)
+
+        cache_dir = f"outputs/{self.config.dataparser.data.name}"
+        dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
+
+        self.dino_dataloader = DinoDataloader(
+            image_list=images,
+            device=self.device,
+            cfg={"image_shape": list(images.shape[2:4])},
+            cache_path=dino_cache_path,
+        )
+
+
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
@@ -84,11 +105,12 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
 
         assert self.train_pixel_sampler is not None
         assert isinstance(image_batch, dict)
+
         batch = self.train_pixel_sampler.sample(image_batch)
-
-
         ray_indices = batch["indices"]
+
         ray_bundle = self.train_ray_generator(ray_indices)
+
         return ray_bundle, batch
 
 

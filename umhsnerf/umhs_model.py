@@ -8,6 +8,10 @@ import torch
 from dataclasses import dataclass, field
 from typing import Type
 from typing import Dict, List, Literal, Tuple, Type
+from collections import defaultdict
+import cv2
+from tqdm import tqdm
+import random
 
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
@@ -15,9 +19,7 @@ from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimize
 from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.model_components.renderers import SemanticRenderer
 from nerfstudio.cameras.rays import RayBundle, RaySamples
-
 from nerfstudio.field_components.field_heads import FieldHeadNames
-
 
 from nerfstudio.model_components.losses import (
     MSELoss,
@@ -29,6 +31,7 @@ from nerfstudio.model_components.losses import (
 )
 
 from umhsnerf.umhs_field import UMHSField
+from umhsnerf.data.utils.dino_extractor import ViTExtractor
 
 
 @dataclass
@@ -116,6 +119,7 @@ class UMHSConfig(NerfactoModelConfig):
     """Average initial density output from MLP. """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
+    patch_size: int = 96
 
 
 
@@ -152,7 +156,7 @@ class UMHSModel(NerfactoModel):
                 average_init_density=self.config.average_init_density,
                 implementation=self.config.implementation)
 
-        self.renderer_semantics = SemanticRenderer()
+        self.renderer_spectral = SemanticRenderer()
         self.rgb_loss = MSELoss()
         self.spectral_loss = MSELoss()
 
@@ -172,12 +176,60 @@ class UMHSModel(NerfactoModel):
         ray_samples_list.append(ray_samples)
 
         rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
+        """
+        try: 
+            patch_rgb = rgb.view(-1, self.config.patch_size, self.config.patch_size, 3)
+            with torch.no_grad():
 
+                # pass patch to dino model
+                extractor = ViTExtractor("dino_vits8",8)
+                patch_rgb = patch_rgb.permute(0, 3, 1, 2)
+                preproc_image_lst = extractor.preprocess(patch_rgb, 500)[0].to(self.device)
+
+                dino_embeds = []
+                for image in tqdm(preproc_image_lst, desc="dino", total=len(patch_rgb), leave=False):
+                    print("image shape", image.shape)
+                    with torch.no_grad():
+                        descriptors = extractor.extract_descriptors(
+                            image.unsqueeze(0),
+                            [11],
+                            "key",
+                            False,
+                        )
+                    descriptors = descriptors.reshape(extractor.num_patches[0], extractor.num_patches[1], -1)
+                    print("dinooooooo", descriptors.shape)
+                    dino_embeds.append(descriptors.cpu().detach())
+
+
+                    print("dino feature", descriptors[0].shape)
+                    print("min", descriptors[0].min())
+                    print("max", descriptors[0].max())
+
+                    single_feature = descriptors[:,:,0]
+                    single_feature = (single_feature - single_feature.min()) / (single_feature.max() - single_feature.min())
+                    print(single_feature.detach().cpu().numpy().shape)
+                    single_feature = single_feature.unsqueeze(-1)
+                    single_feature = torch.clamp(single_feature, 0, 1)
+                    single_feature = single_feature * 255
+
+                    random_number = random.randint(0, 10000) 
+
+                    cv2.imwrite(f"features/dino_feature_{random_number}.png", single_feature.detach().cpu().float().numpy())
+
+                    patch = patch_rgb[0].permute(1, 2, 0)
+                    patch = torch.clamp(patch, 0, 1)
+                    patch = patch * 255
+                    cv2.imwrite(f"features/patch_{random_number}.png", patch.detach().cpu().numpy()[::-1])
+
+        except Exception as e:
+            print(e)
+            pass
+        """
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
 
         with torch.no_grad():
-            spectral = self.renderer_semantics(
+            spectral = self.renderer_spectral(
                 semantics=field_outputs["spectral"], weights=weights
             )
 
@@ -259,5 +311,6 @@ class UMHSModel(NerfactoModel):
                 )
             # Add loss from camera optimizer
             self.camera_optimizer.get_loss_dict(loss_dict)
+        
         return loss_dict
 

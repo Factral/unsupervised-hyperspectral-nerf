@@ -41,8 +41,8 @@ umhs_method = MethodSpecification(
             datamanager=UMHSDataManagerConfig(
                 _target=UMHSDataManager[HyperspectralDataset],
                 dataparser=UMHSDataParserConfig(),
-                train_num_rays_per_batch=4096*2,
-                eval_num_rays_per_batch=4096,
+                train_num_rays_per_batch=9216,
+                eval_num_rays_per_batch=9216,
             ),
             model=UMHSConfig(
                 eval_num_rays_per_chunk=1 << 15,
