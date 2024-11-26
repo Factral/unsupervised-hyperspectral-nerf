@@ -50,7 +50,6 @@ umhs_method = MethodSpecification(
             ),
         ),
         optimizers={
-            # TODO: consider changing optimizers depending on your custom method
             "proposal_networks": {
                 "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),

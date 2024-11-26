@@ -12,6 +12,8 @@ from collections import defaultdict
 import cv2
 from tqdm import tqdm
 import random
+import pandas as pd
+import numpy as np
 
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
@@ -20,6 +22,7 @@ from nerfstudio.field_components.spatial_distortions import SceneContraction
 from nerfstudio.model_components.renderers import SemanticRenderer
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfstudio.utils import colormaps
 
 from nerfstudio.model_components.losses import (
     MSELoss,
@@ -32,6 +35,8 @@ from nerfstudio.model_components.losses import (
 
 from umhsnerf.umhs_field import UMHSField
 from umhsnerf.data.utils.dino_extractor import ViTExtractor
+from umhsnerf.utils.metrics import mse2psnr
+from umhsnerf.utils.spec_to_rgb import spec_to_rgb
 
 
 @dataclass
@@ -119,12 +124,14 @@ class UMHSConfig(NerfactoModelConfig):
     """Average initial density output from MLP. """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
-    patch_size: int = 96
 
+
+    # custom configs
+    method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
 
 
 class UMHSModel(NerfactoModel):
-    """Template Model."""
+    """UMHS Model."""
 
     config: UMHSConfig
 
@@ -137,6 +144,10 @@ class UMHSModel(NerfactoModel):
             scene_contraction = SceneContraction(order=float("inf"))
 
         appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
+
+        cmf_table = pd.read_csv('./datasheet/spec_to_XYZ.csv')  
+        cmf_array = torch.Tensor(np.array(cmf_table[(cmf_table["wavelength"]%10 == 0) & (cmf_table["wavelength"] >= 450) & (cmf_table["wavelength"] <= 650)]))
+        self.cmf = cmf_array[:, 1:].float()
 
         self.field = UMHSField(  
                 self.scene_box.aabb,
@@ -154,11 +165,17 @@ class UMHSModel(NerfactoModel):
                 use_average_appearance_embedding=self.config.use_average_appearance_embedding,
                 appearance_embedding_dim=appearance_embedding_dim,
                 average_init_density=self.config.average_init_density,
-                implementation=self.config.implementation)
+                implementation=self.config.implementation,
+                method=self.config.method,
+                cmf=self.cmf)
 
-        self.renderer_spectral = SemanticRenderer()
         self.rgb_loss = MSELoss()
-        self.spectral_loss = MSELoss()
+
+        if self.config.method == "spectral" or self.config.method == "rgb+spectral":
+            # reuse the renderer for spectral
+            # definition: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/model_components/renderers.py#L408
+            self.renderer_spectral = SemanticRenderer() 
+            self.spectral_loss = MSELoss()
 
     
     def get_outputs(self, ray_bundle: RayBundle):
@@ -175,105 +192,37 @@ class UMHSModel(NerfactoModel):
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
-        rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
-        """
-        try: 
-            patch_rgb = rgb.view(-1, self.config.patch_size, self.config.patch_size, 3)
-            with torch.no_grad():
-
-                # pass patch to dino model
-                extractor = ViTExtractor("dino_vits8",8)
-                patch_rgb = patch_rgb.permute(0, 3, 1, 2)
-                preproc_image_lst = extractor.preprocess(patch_rgb, 500)[0].to(self.device)
-
-                dino_embeds = []
-                for image in tqdm(preproc_image_lst, desc="dino", total=len(patch_rgb), leave=False):
-                    print("image shape", image.shape)
-                    with torch.no_grad():
-                        descriptors = extractor.extract_descriptors(
-                            image.unsqueeze(0),
-                            [11],
-                            "key",
-                            False,
-                        )
-                    descriptors = descriptors.reshape(extractor.num_patches[0], extractor.num_patches[1], -1)
-                    print("dinooooooo", descriptors.shape)
-                    dino_embeds.append(descriptors.cpu().detach())
-
-
-                    print("dino feature", descriptors[0].shape)
-                    print("min", descriptors[0].min())
-                    print("max", descriptors[0].max())
-
-                    single_feature = descriptors[:,:,0]
-                    single_feature = (single_feature - single_feature.min()) / (single_feature.max() - single_feature.min())
-                    print(single_feature.detach().cpu().numpy().shape)
-                    single_feature = single_feature.unsqueeze(-1)
-                    single_feature = torch.clamp(single_feature, 0, 1)
-                    single_feature = single_feature * 255
-
-                    random_number = random.randint(0, 10000) 
-
-                    cv2.imwrite(f"features/dino_feature_{random_number}.png", single_feature.detach().cpu().float().numpy())
-
-                    patch = patch_rgb[0].permute(1, 2, 0)
-                    patch = torch.clamp(patch, 0, 1)
-                    patch = patch * 255
-                    cv2.imwrite(f"features/patch_{random_number}.png", patch.detach().cpu().numpy()[::-1])
-
-        except Exception as e:
-            print(e)
-            pass
-        """
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
-
-        with torch.no_grad():
-            spectral = self.renderer_spectral(
-                semantics=field_outputs["spectral"], weights=weights
-            )
 
         expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
-
         outputs = {
-            "rgb": rgb,
             "accumulation": accumulation,
             "depth": depth,
             "expected_depth": expected_depth,
-            "spectral": spectral,
         }
 
-        # update output with a for of each weavelength of spectral
-        for i in range(spectral.shape[-1]):
-            outputs[f"wv_{i}"] = spectral[..., i]
+        if "rgb" in self.config.method:
+            rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
+            outputs["rgb"] = rgb
 
+        if self.config.method == "spectral":
+            spectral = self.renderer_spectral(
+                semantics=field_outputs["spectral"], weights=weights
+            )
+            outputs["spectral"] = spectral
 
-        if self.config.predict_normals:
-            normals = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
-            pred_normals = self.renderer_normals(field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)
-            outputs["normals"] = self.normals_shader(normals)
-            outputs["pred_normals"] = self.normals_shader(pred_normals)
-        # These use a lot of GPU memory, so we avoid storing them for eval.
+            for i in range(spectral.shape[-1]):
+                outputs[f"wv_{i}"] = spectral[..., i]
+
         if self.training:
             outputs["weights_list"] = weights_list
             outputs["ray_samples_list"] = ray_samples_list
 
-        if self.training and self.config.predict_normals:
-            outputs["rendered_orientation_loss"] = orientation_loss(
-                weights.detach(), field_outputs[FieldHeadNames.NORMALS], ray_bundle.directions
-            )
-
-            outputs["rendered_pred_normal_loss"] = pred_normal_loss(
-                weights.detach(),
-                field_outputs[FieldHeadNames.NORMALS].detach(),
-                field_outputs[FieldHeadNames.PRED_NORMALS],
-            )
-
         for i in range(self.config.num_proposal_iterations):
             outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
-
 
         return outputs
 
@@ -281,36 +230,100 @@ class UMHSModel(NerfactoModel):
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
         loss_dict = {}
 
-
         image = batch["image"].to(self.device)
         gt_spectral = batch["hs_image"].to(self.device)
-        
-        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["rgb"],
-            pred_accumulation=outputs["accumulation"],
-            gt_image=image,
-        )
 
-        loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
-        loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
+        if "rgb" in self.config.method:
+            pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
+                pred_image=outputs["rgb"],
+                pred_accumulation=outputs["accumulation"],
+                gt_image=image,
+            )
+
+        if self.config.method == "rgb":
+            loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+        elif self.config.method == "spectral":
+            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
+        elif self.config.method == "rgb+spectral":
+            loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
+            #loss_dict["spectral_psnr"] = mse2psnr(loss_dict["spectral_loss"])
+
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["weights_list"], outputs["ray_samples_list"]
             )
             assert metrics_dict is not None and "distortion" in metrics_dict
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            if self.config.predict_normals:
-                # orientation loss for computed normals
-                loss_dict["orientation_loss"] = self.config.orientation_loss_mult * torch.mean(
-                    outputs["rendered_orientation_loss"]
-                )
-
-                # ground truth supervision for normals
-                loss_dict["pred_normal_loss"] = self.config.pred_normal_loss_mult * torch.mean(
-                    outputs["rendered_pred_normal_loss"]
-                )
             # Add loss from camera optimizer
             self.camera_optimizer.get_loss_dict(loss_dict)
         
         return loss_dict
 
+
+    def get_metrics_dict(self, outputs, batch):
+        metrics_dict = {}
+        gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
+        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
+        
+        if "rgb" in self.config.method:
+            predicted_rgb = outputs["rgb"]
+        else:
+            predicted_spectral = outputs["spectral"]
+            predicted_rgb = spec_to_rgb(predicted_spectral, self.cmf.to(predicted_spectral.device))
+
+        metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
+
+        if self.training:
+            metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+
+        self.camera_optimizer.get_metrics_dict(metrics_dict)
+        return metrics_dict
+
+
+    def get_image_metrics_and_images(
+        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
+    ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
+        
+        gt_rgb = batch["image"].to(self.device)
+
+        if "rgb" in self.config.method:
+            predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
+        else:
+            predicted_spectral = outputs["spectral"]
+            predicted_rgb = spec_to_rgb(predicted_spectral, self.cmf.to(predicted_spectral.device))
+
+        gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
+        acc = colormaps.apply_colormap(outputs["accumulation"])
+        depth = colormaps.apply_depth_colormap(
+            outputs["depth"],
+            accumulation=outputs["accumulation"],
+        )
+
+        combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
+        combined_acc = torch.cat([acc], dim=1)
+        combined_depth = torch.cat([depth], dim=1)
+
+        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
+        gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
+        predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
+
+        psnr = self.psnr(gt_rgb, predicted_rgb)
+        ssim = self.ssim(gt_rgb, predicted_rgb)
+        lpips = self.lpips(gt_rgb, predicted_rgb)
+
+        # all of these metrics will be logged as scalars
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
+        metrics_dict["lpips"] = float(lpips)
+
+        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+
+        for i in range(self.config.num_proposal_iterations):
+            key = f"prop_depth_{i}"
+            prop_depth_i = colormaps.apply_depth_colormap(
+                outputs[key],
+                accumulation=outputs["accumulation"],
+            )
+            images_dict[key] = prop_depth_i
+
+        return metrics_dict, images_dict

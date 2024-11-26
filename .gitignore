@@ -1,4 +1,5 @@
 outputs/
+
 data/basil/*
 data/dcgm/*
 data/nerfstudio/*
@@ -8,6 +9,9 @@ data/transforms_test.json
 data/transforms.json
 data/spec_to_rgb.csv
 data/ajar_adapted/*
+data/ajar_adapted2/*
+data/cbox_dragon/*
+data/processed/*
 
 features/*
 dcgm/*

@@ -50,13 +50,10 @@ CustomDataParserUnion = Union[UMHSDataParserConfig, AnnotatedDataParserUnion]
 @dataclass
 class UMHSDataManagerConfig(VanillaDataManagerConfig):
     """UMHS DataManager Config
-
-    Add your custom datamanager config parameters here.
     """
 
     _target: Type = field(default_factory=lambda: UMHSDataManager)
     dataparser: AnnotatedDataParserUnion = field(default_factory=UMHSDataParserConfig)
-
     patch_size: int = 96
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
@@ -84,18 +81,18 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
             config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, **kwargs
         )
 
-        images = [self.train_dataset[i]["image"].permute(2, 0, 1)[None, ...] for i in range(len(self.train_dataset))]
-        images = torch.cat(images)
+        if self.config.patch_size > 1:
+            images = [self.train_dataset[i]["image"].permute(2, 0, 1)[None, ...] for i in range(len(self.train_dataset))]
+            images = torch.cat(images)
 
-        cache_dir = f"outputs/{self.config.dataparser.data.name}"
-        dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
-
-        self.dino_dataloader = DinoDataloader(
-            image_list=images,
-            device=self.device,
-            cfg={"image_shape": list(images.shape[2:4])},
-            cache_path=dino_cache_path,
-        )
+            cache_dir = f"outputs/{self.config.dataparser.data.name}"
+            dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
+            self.dino_dataloader = DinoDataloader(
+                image_list=images,
+                device=self.device,
+                cfg={"image_shape": list(images.shape[2:4])},
+                cache_path=dino_cache_path,
+            )
 
 
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:

@@ -2,12 +2,11 @@
 
 ```
 conda activate nerfstudio
-cd nerfstudio-method-template/
+cd umhsnerf
 pip install -e .
-ns-install-cli
 ```
 
-## Running the new method
+## Running the method
 
 ```
 ns-train umhs --data [PATH]

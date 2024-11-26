@@ -8,9 +8,7 @@ from typing import Literal, Optional, Any, Dict
 
 from torch import Tensor
 
-from nerfstudio.field_components.spatial_distortions import SpatialDistortion
 from nerfstudio.fields.nerfacto_field import NerfactoField  # for subclassing NerfactoField
-from nerfstudio.fields.base_field import Field  # for custom Field
 from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 from nerfstudio.fields.base_field import Field, get_normalized_directions
@@ -29,102 +27,7 @@ from nerfstudio.field_components.field_heads import (
 )
 
 
-import numpy as np
-
-
-def g(x, alpha, mu, sigma1, sigma2):
-    sigma = (x < mu)*sigma1 + (x >= mu)*sigma2
-    return alpha*np.exp((x-mu)**2 / (-2*(sigma**2)))
-
-
-def component_x(x): return g(x, 1.056, 5998, 379, 310) + \
-    g(x, 0.362, 4420, 160, 267) + g(x, -0.065, 5011, 204, 262)
-
-
-def component_y(x): return g(x, 0.821, 5688, 469, 405) + \
-    g(x, 0.286, 5309, 163, 311)
-
-
-def component_z(x): return g(x, 1.217, 4370, 118, 360) + \
-    g(x, 0.681, 4590, 260, 138)
-
-
-def xyz_from_xy(x, y):
-    """Return the vector (x, y, 1-x-y)."""
-    return np.array((x, y, 1-x-y))
-
-
-ILUMINANT = {
-    'D65': xyz_from_xy(0.3127, 0.3291),
-    'E':  xyz_from_xy(1/3, 1/3),
-}
-
-COLOR_SPACE = {
-    'sRGB': (xyz_from_xy(0.64, 0.33),
-             xyz_from_xy(0.30, 0.60),
-             xyz_from_xy(0.15, 0.06),
-             ILUMINANT['D65']),
-
-    'AdobeRGB': (xyz_from_xy(0.64, 0.33),
-                 xyz_from_xy(0.21, 0.71),
-                 xyz_from_xy(0.15, 0.06),
-                 ILUMINANT['D65']),
-
-    'AppleRGB': (xyz_from_xy(0.625, 0.34),
-                 xyz_from_xy(0.28, 0.595),
-                 xyz_from_xy(0.155, 0.07),
-                 ILUMINANT['D65']),
-
-    'UHDTV': (xyz_from_xy(0.708, 0.292),
-              xyz_from_xy(0.170, 0.797),
-              xyz_from_xy(0.131, 0.046),
-              ILUMINANT['D65']),
-
-    'CIERGB': (xyz_from_xy(0.7347, 0.2653),
-               xyz_from_xy(0.2738, 0.7174),
-               xyz_from_xy(0.1666, 0.0089),
-               ILUMINANT['E']),
-}
-
-
-class ColourSystem:
-
-    def __init__(self, start=450, end=640, num=21, cs='sRGB'):
-
-        # Chromaticities
-        bands = np.linspace(start=start, stop=end, num=num)*10
-
-        self.cmf = np.array([component_x(bands),
-                             component_y(bands),
-                             component_z(bands)])
-
-        self.red, self.green, self.blue, self.white = COLOR_SPACE[cs]
-
-        # The chromaticity matrix (rgb -> xyz) and its inverse
-        self.M = np.vstack((self.red, self.green, self.blue)).T
-        self.MI = np.linalg.inv(self.M)
-
-        # White scaling array
-        self.wscale = self.MI.dot(self.white)
-
-        # xyz -> rgb transformation matrix
-        self.A = self.MI / self.wscale[:, np.newaxis]
-
-  
-    def get_transform_matrix(self):
-
-        XYZ = self.cmf
-        RGB = XYZ.T @ self.A.T
-        RGB = RGB / np.sum(RGB, axis=0, keepdims=True)
-        return RGB
-
-    def spec_to_rgb(self, spec):
-        """Convert a spectrum to an rgb value."""
-        M = torch.tensor(self.get_transform_matrix()).float().to(spec.device)
-        rgb = spec @ M
-        return rgb
-
-
+from umhsnerf.utils.spec_to_rgb import spec_to_rgb
 
 class UMHSField(NerfactoField):
     """Template Field
@@ -143,24 +46,25 @@ class UMHSField(NerfactoField):
         implementation: Literal["tcnn", "torch"] = "tcnn",
         num_layers_color: int = 3,
         hidden_dim_color: int = 64,
-        wavelengths: int = 21,
+        wavelengths: int = 21, # by default for the nespof dataset
+        method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb",
+        cmf: Tensor = None,
         **kwargs,
-
     ) -> None:
         super().__init__(aabb=aabb, num_images=num_images, **kwargs)
 
-        self.mlp_head = MLP(
-            in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
-            num_layers=num_layers_color,
-            layer_width=hidden_dim_color,
-            out_dim=wavelengths,
-            activation=nn.ReLU(),
-            out_activation=nn.Sigmoid(),
-            implementation=implementation,
-        )
-
-        self.spectorgb = ColourSystem(cs='sRGB')
-
+        self.method = method
+        if self.method == "spectral" or self.method == "rgb+spectral":
+            self.mlp_head = MLP(
+                in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+                num_layers=num_layers_color,
+                layer_width=hidden_dim_color,
+                out_dim=wavelengths,
+                activation=nn.ReLU(),
+                out_activation=nn.Sigmoid(),
+                implementation=implementation,
+            )
+        self.cmf = cmf
 
 
     def get_outputs(
@@ -237,11 +141,21 @@ class UMHSField(NerfactoField):
             dim=-1,
         )
 
-        spec = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
+        if "spectral" in self.method:
+            spec = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
 
-        rgb = self.spectorgb.spec_to_rgb(spec)
+            if self.cmf.device != spec.device:
+                self.cmf = self.cmf.to(spec.device)
 
-        outputs.update({FieldHeadNames.RGB: rgb})
-        outputs.update({"spectral": spec})
+            outputs.update({"spectral": spec})
+
+            if self.method == "rgb+spectral":
+                rgb = spec_to_rgb(spec, self.cmf)
+
+        if self.method == "rgb":
+            rgb = self.mlp_head(h).view(*outputs_shape, 3).to(directions)
+
+        if "rgb" in self.method:
+            outputs.update({FieldHeadNames.RGB: rgb})
 
         return outputs

@@ -35,7 +35,7 @@ class UMHSPipelineConfig(VanillaPipelineConfig):
     model: ModelConfig = UMHSConfig()
     """specifies the model config"""
 
-
+# based on: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/pipelines/base_pipeline.py#L212
 class UMHSPipeline(VanillaPipeline):
     """UMHS Pipeline
 
