@@ -1,51 +1,163 @@
+import torch
+import numpy as np
+import torch.nn as nn
+
+
+def g(x, alpha, mu, sigma1, sigma2):
+    # Calculate sigma and apply np.clip
+    sigma = np.clip((x < mu) * sigma1 + (x >= mu) * sigma2, a_min=1e-6, a_max=None)
+    return alpha * np.exp((x - mu)**2 / (-2 * (sigma**2)))
+
+
+
+def component_x(x): return g(x, 1.056, 5998, 379, 310) + \
+    g(x, 0.362, 4420, 160, 267) + g(x, -0.065, 5011, 204, 262)
+
+
+def component_y(x): return g(x, 0.821, 5688, 469, 405) + \
+    g(x, 0.286, 5309, 163, 311)
+
+
+def component_z(x): return g(x, 1.217, 4370, 118, 360) + \
+    g(x, 0.681, 4590, 260, 138)
+
+
+def xyz_from_xy(x, y):
+    """Return the vector (x, y, 1-x-y)."""
+    return np.array((x, y, 1-x-y))
+
+
+ILUMINANT = {
+    'D65': xyz_from_xy(0.3127, 0.3291),
+    'E':  xyz_from_xy(1/3, 1/3),
+}
+
+COLOR_SPACE = {
+    'sRGB': (xyz_from_xy(0.64, 0.33),
+             xyz_from_xy(0.30, 0.60),
+             xyz_from_xy(0.15, 0.06),
+             ILUMINANT['D65']),
+
+    'AdobeRGB': (xyz_from_xy(0.64, 0.33),
+                 xyz_from_xy(0.21, 0.71),
+                 xyz_from_xy(0.15, 0.06),
+                 ILUMINANT['D65']),
+
+    'AppleRGB': (xyz_from_xy(0.625, 0.34),
+                 xyz_from_xy(0.28, 0.595),
+                 xyz_from_xy(0.155, 0.07),
+                 ILUMINANT['D65']),
+
+    'UHDTV': (xyz_from_xy(0.708, 0.292),
+              xyz_from_xy(0.170, 0.797),
+              xyz_from_xy(0.131, 0.046),
+              ILUMINANT['D65']),
+
+    'CIERGB': (xyz_from_xy(0.7347, 0.2653),
+               xyz_from_xy(0.2738, 0.7174),
+               xyz_from_xy(0.1666, 0.0089),
+               ILUMINANT['E']),
+}
 
 import torch
+import numpy as np
+import torch.nn as nn
 
 
-def spec_to_rgb(spec, cmf):
-    """
-    Converts spectral data (rays) to RGB using a color matching function (CMF) and gamma correction.
+def g(x, alpha, mu, sigma1, sigma2):
+    # Calculate sigma and apply np.clip
+    sigma = np.clip((x < mu) * sigma1 + (x >= mu) * sigma2, a_min=1e-6, a_max=None)
+    return alpha * np.exp((x - mu)**2 / (-2 * (sigma**2)))
 
-    Args:
-        spec (torch.Tensor): Spectral data of shape [R, S, C], where R is the number of rays, 
-                             S is the spatial dimension, and C is the spectral dimension.
-        cmf (torch.Tensor): Color Matching Function of shape [C, 3].
 
-    Returns:
-        torch.Tensor: RGB data of shape [R, S, 3].
-    """
-    # Check shapes
-    if spec.shape[-1] != cmf.shape[0]:
-        raise ValueError("The last dimension of 'spec' must match the first dimension of 'cmf'.")
-    
-    # Compute XYZ by collapsing the spectral dimension
-    # spec: [R, S, C], cmf: [C, 3]
-    # Result: [R, S, 3]
-    if spec.ndim == 2:
-        xyz = torch.einsum('sc,cm->sm', spec, cmf)
-    else:
-        xyz = torch.einsum('rsc,cm->rsm', spec, cmf)
-    
-    # Convert XYZ to sRGB
-    srgb_matrix = torch.tensor([
-        [3.2406, -1.5372, -0.4986],
-        [-0.9689,  1.8758,  0.0415],
-        [0.0557, -0.2040,  1.0570]
-    ], dtype=spec.dtype, device=spec.device)
-    
-    # Apply the sRGB transformation
-    if xyz.ndim == 2:
-        srgb = torch.einsum('ij,smj->sm', srgb_matrix, xyz.unsqueeze(-1)).squeeze(-1)
-    else:
-        srgb = torch.einsum('ij,rsmj->rsm', srgb_matrix, xyz.unsqueeze(-1)).squeeze(-1)
 
-    # Gamma correction
-    def gamma_correction(x):
-        threshold = 0.0031308
-        return torch.where(x <= threshold, 12.92 * x, 1.055 * (x ** (1 / 2.4)) - 0.055)
-    
-    rgb = gamma_correction(srgb)
-    # normalize between 0 and 1 with min max normalization
-    rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
+def component_x(x): return g(x, 1.056, 5998, 379, 310) + \
+    g(x, 0.362, 4420, 160, 267) + g(x, -0.065, 5011, 204, 262)
 
-    return rgb
+
+def component_y(x): return g(x, 0.821, 5688, 469, 405) + \
+    g(x, 0.286, 5309, 163, 311)
+
+
+def component_z(x): return g(x, 1.217, 4370, 118, 360) + \
+    g(x, 0.681, 4590, 260, 138)
+
+
+def xyz_from_xy(x, y):
+    """Return the vector (x, y, 1-x-y)."""
+    return np.array((x, y, 1-x-y))
+
+
+ILUMINANT = {
+    'D65': xyz_from_xy(0.3127, 0.3291),
+    'E':  xyz_from_xy(1/3, 1/3),
+}
+
+COLOR_SPACE = {
+    'sRGB': (xyz_from_xy(0.64, 0.33),
+             xyz_from_xy(0.30, 0.60),
+             xyz_from_xy(0.15, 0.06),
+             ILUMINANT['D65']),
+
+    'AdobeRGB': (xyz_from_xy(0.64, 0.33),
+                 xyz_from_xy(0.21, 0.71),
+                 xyz_from_xy(0.15, 0.06),
+                 ILUMINANT['D65']),
+
+    'AppleRGB': (xyz_from_xy(0.625, 0.34),
+                 xyz_from_xy(0.28, 0.595),
+                 xyz_from_xy(0.155, 0.07),
+                 ILUMINANT['D65']),
+
+    'UHDTV': (xyz_from_xy(0.708, 0.292),
+              xyz_from_xy(0.170, 0.797),
+              xyz_from_xy(0.131, 0.046),
+              ILUMINANT['D65']),
+
+    'CIERGB': (xyz_from_xy(0.7347, 0.2653),
+               xyz_from_xy(0.2738, 0.7174),
+               xyz_from_xy(0.1666, 0.0089),
+               ILUMINANT['E']),
+}
+
+class ColourSystem(nn.Module):
+    def __init__(self, start=450, end=650, num=21, cs='sRGB', device='cuda'):
+        super().__init__()
+
+        bands = np.linspace(start=start, stop=end, num=num) * 10
+        cmf = np.array([component_x(bands), component_y(bands), component_z(bands)])
+
+        red, green, blue, white = COLOR_SPACE[cs]
+        M = np.vstack((red, green, blue)).T
+        MI = np.linalg.inv(M)
+        wscale = MI.dot(white)
+        A = MI / wscale[:, np.newaxis]
+
+        XYZ = cmf
+        RGB = XYZ.T @ A.T
+        RGB = RGB / np.sum(RGB, axis=0, keepdims=True)
+
+        # Register buffer instead of attribute
+        self.register_buffer(
+            'transform_matrix',
+            torch.from_numpy(RGB).float()
+        )
+
+    def gamma_correction(self, x):
+        result = torch.where(
+            x < 0.0031308,
+            12.92 * x,
+            1.055 * (x.clamp(min=1e-6).pow(1 / 2.4)) - 0.055
+        )
+
+        return result
+
+    def forward(self, spec):
+
+        rgb = spec @ self.transform_matrix
+
+        rgb = self.gamma_correction(rgb)
+
+        rgb.clamp_(0, 1)
+
+        return rgb

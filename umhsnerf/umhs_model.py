@@ -36,7 +36,7 @@ from nerfstudio.model_components.losses import (
 from umhsnerf.umhs_field import UMHSField
 from umhsnerf.data.utils.dino_extractor import ViTExtractor
 from umhsnerf.utils.metrics import mse2psnr
-from umhsnerf.utils.spec_to_rgb import spec_to_rgb
+from umhsnerf.utils.spec_to_rgb import ColourSystem
 
 
 @dataclass
@@ -171,11 +171,12 @@ class UMHSModel(NerfactoModel):
 
         self.rgb_loss = MSELoss()
 
-        if self.config.method == "spectral" or self.config.method == "rgb+spectral":
+        if 'spectral' in self.config.method:
             # reuse the renderer for spectral
             # definition: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/model_components/renderers.py#L408
             self.renderer_spectral = SemanticRenderer() 
             self.spectral_loss = MSELoss()
+            self.converter = ColourSystem()
 
     
     def get_outputs(self, ray_bundle: RayBundle):
@@ -208,14 +209,19 @@ class UMHSModel(NerfactoModel):
             rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
             outputs["rgb"] = rgb
 
-        if self.config.method == "spectral":
+        if "spectral" in self.config.method:
             spectral = self.renderer_spectral(
                 semantics=field_outputs["spectral"], weights=weights
             )
-            outputs["spectral"] = spectral
 
+            outputs["spectral"] = spectral
             for i in range(spectral.shape[-1]):
                 outputs[f"wv_{i}"] = spectral[..., i]
+
+            #pseudorgb
+            if self.config.method == "spectral":
+                with torch.no_grad():
+                    outputs["rgb"] = self.converter(spectral)
 
         if self.training:
             outputs["weights_list"] = weights_list
@@ -245,10 +251,9 @@ class UMHSModel(NerfactoModel):
         elif self.config.method == "spectral":
             loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
         elif self.config.method == "rgb+spectral":
+            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"]) * 4
             loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
-            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
-            #loss_dict["spectral_psnr"] = mse2psnr(loss_dict["spectral_loss"])
-
+        
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["weights_list"], outputs["ray_samples_list"]
@@ -265,13 +270,8 @@ class UMHSModel(NerfactoModel):
         metrics_dict = {}
         gt_rgb = batch["image"].to(self.device)  # RGB or RGBA image
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)  # Blend if RGBA
-        
-        if "rgb" in self.config.method:
-            predicted_rgb = outputs["rgb"]
-        else:
-            predicted_spectral = outputs["spectral"]
-            predicted_rgb = spec_to_rgb(predicted_spectral, self.cmf.to(predicted_spectral.device))
 
+        predicted_rgb = outputs["rgb"]
         metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
 
         if self.training:
@@ -286,14 +286,10 @@ class UMHSModel(NerfactoModel):
     ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
         
         gt_rgb = batch["image"].to(self.device)
-
-        if "rgb" in self.config.method:
-            predicted_rgb = outputs["rgb"]  # Blended with background (black if random background)
-        else:
-            predicted_spectral = outputs["spectral"]
-            predicted_rgb = spec_to_rgb(predicted_spectral, self.cmf.to(predicted_spectral.device))
-
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
+
+        predicted_rgb = outputs["rgb"]
+
         acc = colormaps.apply_colormap(outputs["accumulation"])
         depth = colormaps.apply_depth_colormap(
             outputs["depth"],
@@ -311,12 +307,14 @@ class UMHSModel(NerfactoModel):
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
         lpips = self.lpips(gt_rgb, predicted_rgb)
+        se_per_pixel = (gt_rgb - predicted_rgb) ** 2
+        se_per_pixel = se_per_pixel.squeeze().permute(1, 2, 0).mean(dim=-1).unsqueeze(-1)
 
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
         metrics_dict["lpips"] = float(lpips)
 
-        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth}
+        images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
         for i in range(self.config.num_proposal_iterations):
             key = f"prop_depth_{i}"

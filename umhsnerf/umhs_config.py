@@ -35,13 +35,13 @@ umhs_method = MethodSpecification(
         method_name="umhsnerf",
         steps_per_eval_batch=500,
         steps_per_save=2000,
-        max_num_iterations=30000,
+        max_num_iterations=100000,
         mixed_precision=True,
         pipeline=VanillaPipelineConfig(
             datamanager=UMHSDataManagerConfig(
                 _target=UMHSDataManager[HyperspectralDataset],
                 dataparser=UMHSDataParserConfig(),
-                train_num_rays_per_batch=9216,
+                train_num_rays_per_batch=9216*4,
                 eval_num_rays_per_batch=9216,
             ),
             model=UMHSConfig(

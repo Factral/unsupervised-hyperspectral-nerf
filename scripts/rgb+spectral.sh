@@ -1,0 +1,13 @@
+CUDA_VISIBLE_DEVICES=2 ns-train  umhsnerf \
+ --machine.seed 42 \
+ --log-gradients True \
+ --pipeline.model.far-plane 1000 \
+ --pipeline.model.near_plane 0.05 \
+ --pipeline.model.background-color last_sample \
+ --pipeline.datamanager.images-on-gpu True \
+ --pipeline.datamanager.patch-size 1 \
+ --pipeline.datamanager.train-num-rays-per-batch 8192 \
+ --pipeline.model.method rgb+spectral \
+ --data data/processed/ajar  \
+ --experiment-name "rgb+spectral" \
+ --vis wandb --viewer.websocket-port 7009 \

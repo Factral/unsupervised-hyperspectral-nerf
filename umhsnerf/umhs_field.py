@@ -27,7 +27,7 @@ from nerfstudio.field_components.field_heads import (
 )
 
 
-from umhsnerf.utils.spec_to_rgb import spec_to_rgb
+from umhsnerf.utils.spec_to_rgb import ColourSystem
 
 class UMHSField(NerfactoField):
     """Template Field
@@ -65,6 +65,7 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
         self.cmf = cmf
+        self.converter = ColourSystem()
 
 
     def get_outputs(
@@ -143,14 +144,11 @@ class UMHSField(NerfactoField):
 
         if "spectral" in self.method:
             spec = self.mlp_head(h).view(*outputs_shape, -1).to(directions)
-
-            if self.cmf.device != spec.device:
-                self.cmf = self.cmf.to(spec.device)
-
+            
             outputs.update({"spectral": spec})
-
+            
             if self.method == "rgb+spectral":
-                rgb = spec_to_rgb(spec, self.cmf)
+                rgb = self.converter(spec).to(directions)
 
         if self.method == "rgb":
             rgb = self.mlp_head(h).view(*outputs_shape, 3).to(directions)

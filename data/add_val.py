@@ -35,8 +35,8 @@ def save_merged_json(merged_data, output_path):
         json.dump(merged_data, f, indent=4)
 
 if __name__ == "__main__":
-    json_path1 = "./nespof/ajar/ajar/transforms_test.json"
-    json_path2 = "./nespof/ajar/ajar/transforms_train.json"
+    json_path1 = "./ajar/transforms_test.json"
+    json_path2 = "./ajar/transforms_train.json"
     output_path = "./transforms.json"
     
     try:

@@ -54,7 +54,7 @@ class UMHSDataManagerConfig(VanillaDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: UMHSDataManager)
     dataparser: AnnotatedDataParserUnion = field(default_factory=UMHSDataParserConfig)
-    patch_size: int = 96
+    patch_size: int = 1
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 
