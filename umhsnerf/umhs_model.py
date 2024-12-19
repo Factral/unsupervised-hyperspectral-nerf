@@ -251,7 +251,7 @@ class UMHSModel(NerfactoModel):
         elif self.config.method == "spectral":
             loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
         elif self.config.method == "rgb+spectral":
-            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"]) * 4
+            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
             loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
         
         if self.training:

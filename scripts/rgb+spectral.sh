@@ -9,5 +9,5 @@ CUDA_VISIBLE_DEVICES=2 ns-train  umhsnerf \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method rgb+spectral \
  --data data/processed/ajar  \
- --experiment-name "rgb+spectral" \
+ --experiment-name "rgb+spectral2" \
  --vis wandb --viewer.websocket-port 7009 \

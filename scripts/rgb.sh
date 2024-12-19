@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=0 ns-train  umhsnerf \
+CUDA_VISIBLE_DEVICES=1 ns-train  umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
  --pipeline.model.far-plane 1000 \
@@ -6,8 +6,8 @@ CUDA_VISIBLE_DEVICES=0 ns-train  umhsnerf \
  --pipeline.model.background-color last_sample \
  --pipeline.datamanager.images-on-gpu True \
  --pipeline.datamanager.patch-size 1 \
- --pipeline.datamanager.train-num-rays-per-batch 32768 \
+ --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method rgb \
  --data data/processed/ajar  \
  --experiment-name "rgb" \
- --vis viewer+wandb --viewer.websocket-port 7007 \
+ --vis wandb --viewer.websocket-port 7007 \
