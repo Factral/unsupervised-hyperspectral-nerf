@@ -58,31 +58,8 @@ class UMHSPipeline(VanillaPipeline):
         local_rank: int = 0,
         grad_scaler: Optional[GradScaler] = None,
     ):
-        super(VanillaPipeline, self).__init__()
-        self.config = config
-        self.test_mode = test_mode
-        self.datamanager: DataManager = config.datamanager.setup(
-            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
-        )
-        self.datamanager.to(device)
-
-        assert self.datamanager.train_dataset is not None, "Missing input dataset"
-        self._model = config.model.setup(
-            scene_box=self.datamanager.train_dataset.scene_box,
-            num_train_data=len(self.datamanager.train_dataset),
-            metadata=self.datamanager.train_dataset.metadata,
-            device=device,
-            grad_scaler=grad_scaler,
-        )
-        self.model.to(device)
-
-        self.world_size = world_size
-        if world_size > 1:
-            self._model = typing.cast(
-                UMHSModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True)
-            )
-            dist.barrier(device_ids=[local_rank])
-
+        super().__init__(config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, grad_scaler=grad_scaler)
+     
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
@@ -92,13 +69,11 @@ class UMHSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
+        #autocast is needed when using tcnn https://github.com/NVlabs/tiny-cuda-nn/issues/377
         with torch.autocast(device_type="cuda", enabled=True):
             self.eval()
             ray_bundle, batch = self.datamanager.next_eval(step)
-            #autocast is needed when using tcnn https://github.com/NVlabs/tiny-cuda-nn/issues/377
-        
             model_outputs = self.model(ray_bundle)
-        
             metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
             loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
             self.train()

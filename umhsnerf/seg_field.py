@@ -181,5 +181,8 @@ class SemanticField(FieldComponent):
         logits = logits.expand(N, -1)
 
         # convert to probabilities
-        probabilities = F.softmax(logits, dim=-1)
+        probabilities = F.softmax(logits / 0.5, dim=-1)
+        #print(probabilities)
+        print(self.endmembers.squeeze())
+
         return probabilities

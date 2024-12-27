@@ -7,7 +7,7 @@ Currently this subclasses the Nerfacto model. Consider subclassing from the base
 import torch
 from dataclasses import dataclass, field
 from typing import Type
-from typing import Dict, List, Literal, Tuple, Type
+from typing import Dict, List, Literal, Tuple, Type, Union, Optional
 from collections import defaultdict
 import cv2
 from tqdm import tqdm
@@ -23,6 +23,10 @@ from nerfstudio.model_components.renderers import SemanticRenderer
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.utils import colormaps
+from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.data.scene_box import OrientedBox
+from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
+
 
 from nerfstudio.model_components.losses import (
     MSELoss,
@@ -330,3 +334,68 @@ class UMHSModel(NerfactoModel):
             images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict
+
+    #related to https://github.com/NVlabs/tiny-cuda-nn/issues/377
+    @torch.no_grad()
+    def get_outputs_for_camera(self, camera: Cameras, obb_box: Optional[OrientedBox] = None) -> Dict[str, torch.Tensor]:
+        """Takes in a camera, generates the raybundle, and computes the output of the model.
+        Assumes a ray-based model.
+
+        Args:   
+            camera: generates raybundle
+        """
+        with torch.autocast(device_type="cuda", enabled=True):
+            return self.get_outputs_for_camera_ray_bundle(
+                camera.generate_rays(camera_indices=0, keep_shape=True, obb_box=obb_box)
+            )
+
+
+    def get_training_callbacks(
+        self, training_callback_attributes: TrainingCallbackAttributes
+    ) -> List[TrainingCallback]:
+        callbacks = []
+        if self.config.use_proposal_weight_anneal:
+            # anneal the weights of the proposal network before doing PDF sampling
+            N = self.config.proposal_weights_anneal_max_num_iters
+
+            def set_anneal(step):
+                # https://arxiv.org/pdf/2111.12077.pdf eq. 18
+                self.step = step
+                train_frac = np.clip(step / N, 0, 1)
+                self.step = step
+
+                def bias(x, b):
+                    return b * x / ((b - 1) * x + 1)
+
+                anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
+                self.proposal_sampler.set_anneal(anneal)
+
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=set_anneal,
+                )
+            )
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=self.proposal_sampler.step_cb,
+                )
+            )
+
+            def clamp_endmembers(step):
+                with torch.no_grad():
+                    self.field.semantic_field.endmembers[:] = self.field.semantic_field.endmembers.clamp(0, 1)
+
+            # callback to clamp between 0 and 1 the endmember parameter
+            callbacks.append(
+                TrainingCallback(
+                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                    update_every_num_iters=1,
+                    func=clamp_endmembers
+                )
+            )
+
+        return callbacks

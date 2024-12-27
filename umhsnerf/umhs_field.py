@@ -127,11 +127,8 @@ class UMHSField(NerfactoField):
                 dim=-1,
             ) # direction, density features, appeareance embeddings
 
-            features = torch.clamp(
-                self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes),
-                -100, 100
-            )
-
+            features = self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes)
+            
             abundances = self.semantic_field(
                 self._sample_locations,
                 density_embedding=density_embedding.view(-1, self.geo_feat_dim),
@@ -142,17 +139,18 @@ class UMHSField(NerfactoField):
             endmembers = endmembers.squeeze().unsqueeze(0).unsqueeze(0)
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
-            endmember_spectra = (features * endmembers) #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
+            endmember_spectra = features * endmembers #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
 
-            endmember_spectra.clamp_(0, 1)
-            spec = (endmember_spectra  @ abundances.unsqueeze(-1))  + 1e-8 # (..., wavelengths)
+            endmember_spectra = torch.clamp(endmember_spectra, 0, 1)
+            spec = (endmember_spectra  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
 
-            outputs["spectral"] = spec.squeeze().to(directions)
+            outputs["spectral"] = spec.to(directions)
             outputs["abundances"] = abundances
             
             if self.method == "rgb+spectral":
                 rgb = self.converter(spec).to(directions)
                 outputs[FieldHeadNames.RGB] = rgb
+
 
         elif self.method == "rgb":
             # Original RGB prediction
