@@ -37,7 +37,7 @@ umhs_method = MethodSpecification(
         steps_per_save=2000,
         max_num_iterations=100000,
         mixed_precision=True,
-        pipeline=VanillaPipelineConfig(
+        pipeline=UMHSPipelineConfig(
             datamanager=UMHSDataManagerConfig(
                 _target=UMHSDataManager[HyperspectralDataset],
                 dataparser=UMHSDataParserConfig(),
@@ -55,7 +55,7 @@ umhs_method = MethodSpecification(
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
             },
             "fields": {
-                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=50000),
             },
             "camera_opt": {

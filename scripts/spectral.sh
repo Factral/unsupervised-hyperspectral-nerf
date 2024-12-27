@@ -8,6 +8,7 @@ CUDA_VISIBLE_DEVICES=1 ns-train  umhsnerf \
  --pipeline.datamanager.patch-size 1 \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method spectral \
+ --pipeline.model.implementation tcnn \
  --data data/processed/ajar  \
  --experiment-name "spectral only try" \
  --vis viewer+wandb --viewer.websocket-port 7008 \

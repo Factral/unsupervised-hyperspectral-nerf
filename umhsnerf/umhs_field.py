@@ -127,7 +127,10 @@ class UMHSField(NerfactoField):
                 dim=-1,
             ) # direction, density features, appeareance embeddings
 
-            features = self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes)
+            features = torch.clamp(
+                self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes),
+                -100, 100
+            )
 
             abundances = self.semantic_field(
                 self._sample_locations,
@@ -142,7 +145,7 @@ class UMHSField(NerfactoField):
             endmember_spectra = (features * endmembers) #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
 
             endmember_spectra.clamp_(0, 1)
-            spec = endmember_spectra  @ abundances.unsqueeze(-1) # (..., wavelengths)
+            spec = (endmember_spectra  @ abundances.unsqueeze(-1))  + 1e-8 # (..., wavelengths)
 
             outputs["spectral"] = spec.squeeze().to(directions)
             outputs["abundances"] = abundances

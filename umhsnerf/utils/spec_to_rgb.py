@@ -135,7 +135,7 @@ class ColourSystem(nn.Module):
 
         XYZ = cmf
         RGB = XYZ.T @ A.T
-        RGB = RGB / np.sum(RGB, axis=0, keepdims=True)
+        RGB = RGB / (np.sum(RGB, axis=0, keepdims=True) + 1e-6)
 
         # Register buffer instead of attribute
         self.register_buffer(
