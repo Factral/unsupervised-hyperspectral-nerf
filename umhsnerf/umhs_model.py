@@ -116,7 +116,7 @@ class UMHSConfig(NerfactoModelConfig):
     """Whether to disable scene contraction or not."""
     use_gradient_scaling: bool = False
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
-    implementation: Literal["tcnn", "torch"] = "tcnn"
+    implementation: Literal["tcnn", "torch"] = "torch"
     """Which implementation to use for the model."""
     appearance_embed_dim: int = 32
     """Dimension of the appearance embedding."""
@@ -124,7 +124,6 @@ class UMHSConfig(NerfactoModelConfig):
     """Average initial density output from MLP. """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
-
 
     # custom configs
     method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
@@ -145,9 +144,6 @@ class UMHSModel(NerfactoModel):
 
         appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
-        cmf_table = pd.read_csv('./datasheet/spec_to_XYZ.csv')  
-        cmf_array = torch.Tensor(np.array(cmf_table[(cmf_table["wavelength"]%10 == 0) & (cmf_table["wavelength"] >= 450) & (cmf_table["wavelength"] <= 650)]))
-        self.cmf = cmf_array[:, 1:].float()
 
         self.field = UMHSField(  
                 self.scene_box.aabb,
@@ -167,7 +163,7 @@ class UMHSModel(NerfactoModel):
                 average_init_density=self.config.average_init_density,
                 implementation=self.config.implementation,
                 method=self.config.method,
-                cmf=self.cmf)
+                )
 
         self.rgb_loss = MSELoss()
 
@@ -175,6 +171,7 @@ class UMHSModel(NerfactoModel):
             # reuse the renderer for spectral
             # definition: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/model_components/renderers.py#L408
             self.renderer_spectral = SemanticRenderer() 
+            self.renderer_abundances = SemanticRenderer()
             self.spectral_loss = MSELoss()
             self.converter = ColourSystem()
 
@@ -222,6 +219,14 @@ class UMHSModel(NerfactoModel):
             if self.config.method == "spectral":
                 with torch.no_grad():
                     outputs["rgb"] = self.converter(spectral)
+
+            #abundances
+            with torch.no_grad():
+                abundances = self.renderer_abundances(
+                    semantics=field_outputs["abundances"], weights=weights
+                )
+            for i in range(abundances.shape[-1]):
+                outputs[f"abundance_{i}"] = abundances[..., i]
 
         if self.training:
             outputs["weights_list"] = weights_list

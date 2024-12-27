@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=3 ns-train  umhsnerf \
+CUDA_VISIBLE_DEVICES=1 ns-train  umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
  --pipeline.model.far-plane 1000 \
@@ -9,5 +9,5 @@ CUDA_VISIBLE_DEVICES=3 ns-train  umhsnerf \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method spectral \
  --data data/processed/ajar  \
- --experiment-name "spectral only" \
- --vis wandb --viewer.websocket-port 7008 \
+ --experiment-name "spectral only try" \
+ --vis viewer+wandb --viewer.websocket-port 7008 \
