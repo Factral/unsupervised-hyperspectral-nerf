@@ -9,68 +9,6 @@ def g(x, alpha, mu, sigma1, sigma2):
     return alpha * np.exp((x - mu)**2 / (-2 * (sigma**2)))
 
 
-
-def component_x(x): return g(x, 1.056, 5998, 379, 310) + \
-    g(x, 0.362, 4420, 160, 267) + g(x, -0.065, 5011, 204, 262)
-
-
-def component_y(x): return g(x, 0.821, 5688, 469, 405) + \
-    g(x, 0.286, 5309, 163, 311)
-
-
-def component_z(x): return g(x, 1.217, 4370, 118, 360) + \
-    g(x, 0.681, 4590, 260, 138)
-
-
-def xyz_from_xy(x, y):
-    """Return the vector (x, y, 1-x-y)."""
-    return np.array((x, y, 1-x-y))
-
-
-ILUMINANT = {
-    'D65': xyz_from_xy(0.3127, 0.3291),
-    'E':  xyz_from_xy(1/3, 1/3),
-}
-
-COLOR_SPACE = {
-    'sRGB': (xyz_from_xy(0.64, 0.33),
-             xyz_from_xy(0.30, 0.60),
-             xyz_from_xy(0.15, 0.06),
-             ILUMINANT['D65']),
-
-    'AdobeRGB': (xyz_from_xy(0.64, 0.33),
-                 xyz_from_xy(0.21, 0.71),
-                 xyz_from_xy(0.15, 0.06),
-                 ILUMINANT['D65']),
-
-    'AppleRGB': (xyz_from_xy(0.625, 0.34),
-                 xyz_from_xy(0.28, 0.595),
-                 xyz_from_xy(0.155, 0.07),
-                 ILUMINANT['D65']),
-
-    'UHDTV': (xyz_from_xy(0.708, 0.292),
-              xyz_from_xy(0.170, 0.797),
-              xyz_from_xy(0.131, 0.046),
-              ILUMINANT['D65']),
-
-    'CIERGB': (xyz_from_xy(0.7347, 0.2653),
-               xyz_from_xy(0.2738, 0.7174),
-               xyz_from_xy(0.1666, 0.0089),
-               ILUMINANT['E']),
-}
-
-import torch
-import numpy as np
-import torch.nn as nn
-
-
-def g(x, alpha, mu, sigma1, sigma2):
-    # Calculate sigma and apply np.clip
-    sigma = np.clip((x < mu) * sigma1 + (x >= mu) * sigma2, a_min=1e-6, a_max=None)
-    return alpha * np.exp((x - mu)**2 / (-2 * (sigma**2)))
-
-
-
 def component_x(x): return g(x, 1.056, 5998, 379, 310) + \
     g(x, 0.362, 4420, 160, 267) + g(x, -0.065, 5011, 204, 262)
 
@@ -152,12 +90,13 @@ class ColourSystem(nn.Module):
 
         return result
 
+    @torch.cuda.amp.autocast()
     def forward(self, spec):
 
-        rgb = spec @ self.transform_matrix
+        rgb = torch.matmul(spec, self.transform_matrix)
 
         rgb = self.gamma_correction(rgb)
 
-        rgb.clamp_(0, 1)
+        rgb = rgb.clamp(0, 1)
 
         return rgb

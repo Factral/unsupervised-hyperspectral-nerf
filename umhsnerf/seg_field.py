@@ -21,7 +21,7 @@ class SemanticField(FieldComponent):
         wavelengths: int = 21,
         hidden_dim: int = 64,
         implementation: Literal["tcnn", "torch"] = "torch",
-        dropout: float = 0.1,
+        dropout: float = 0,
     ) -> None:
         super().__init__()
 
@@ -36,7 +36,7 @@ class SemanticField(FieldComponent):
         input_dim = self.position_encoding.get_out_dim() + self.dir_embedding_dim
         self.feature_mlp = MLP(
             in_dim=input_dim,
-            num_layers=2,
+            num_layers=3,
             layer_width=hidden_dim,
             out_dim=feature_dim,
             activation=nn.ReLU(),
@@ -53,7 +53,7 @@ class SemanticField(FieldComponent):
             layer_width=hidden_dim,
             out_dim=feature_dim,
             activation=nn.ReLU(),
-            out_activation=nn.Tanh(),
+            out_activation=None,
             implementation=implementation,
         )
 
@@ -105,6 +105,7 @@ class SemanticField(FieldComponent):
         self.norm_query = nn.LayerNorm(feature_dim)   # for the endmembers
         self.norm_self = nn.LayerNorm(feature_dim)    # for the self-attention input
         self.norm_out = nn.LayerNorm(feature_dim)     # optional final norm
+        self.norm_input = nn.LayerNorm(input_dim)   # for the input features
 
     def forward(
         self,
@@ -129,6 +130,9 @@ class SemanticField(FieldComponent):
         # Concatenate position + direction embeddings
         features_input = torch.cat([positions_flat, density_embedding], dim=-1)
         # => (N, feature_dim)
+
+        features_input = self.norm_input(features_input)
+
         features = self.feature_mlp(features_input)
 
         # 1) Turn features into shape (1, N, feature_dim) for cross-attn
@@ -183,6 +187,6 @@ class SemanticField(FieldComponent):
         # convert to probabilities
         probabilities = F.softmax(logits / 0.5, dim=-1)
         #print(probabilities)
-        print(self.endmembers.squeeze())
+        #print(self.endmembers.squeeze())
 
         return probabilities

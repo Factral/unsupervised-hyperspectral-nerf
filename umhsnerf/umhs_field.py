@@ -128,10 +128,12 @@ class UMHSField(NerfactoField):
             ) # direction, density features, appeareance embeddings
 
             features = self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes)
-            
+        
+
+            positions =  ray_samples.frustums.get_positions()
             abundances = self.semantic_field(
-                self._sample_locations,
-                density_embedding=density_embedding.view(-1, self.geo_feat_dim),
+                positions.detach(),
+                density_embedding=density_embedding.view(-1, self.geo_feat_dim).detach(),
             )
             abundances = abundances.view(*ray_samples.frustums.directions.shape[:-1], -1)
 

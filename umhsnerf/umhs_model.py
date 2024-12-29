@@ -41,6 +41,7 @@ from umhsnerf.umhs_field import UMHSField
 from umhsnerf.data.utils.dino_extractor import ViTExtractor
 from umhsnerf.utils.metrics import mse2psnr
 from umhsnerf.utils.spec_to_rgb import ColourSystem
+from umhsnerf.utils.hooks import nan_hook
 
 
 @dataclass
@@ -179,7 +180,12 @@ class UMHSModel(NerfactoModel):
             self.spectral_loss = MSELoss()
             self.converter = ColourSystem()
 
-    
+        for name, module in self.named_modules():
+            module.register_forward_hook(nan_hook)
+            for child in module.children():
+                child.register_forward_hook(nan_hook)
+
+
     def get_outputs(self, ray_bundle: RayBundle):
         # apply the camera optimizer pose tweaks
         if self.training:
@@ -393,7 +399,7 @@ class UMHSModel(NerfactoModel):
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                    update_every_num_iters=1,
+                    update_every_num_iters=5,
                     func=clamp_endmembers
                 )
             )

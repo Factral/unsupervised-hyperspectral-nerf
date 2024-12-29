@@ -59,7 +59,8 @@ class UMHSPipeline(VanillaPipeline):
         grad_scaler: Optional[GradScaler] = None,
     ):
         super().__init__(config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, grad_scaler=grad_scaler)
-     
+        torch.autograd.set_detect_anomaly(True)
+
 
     @profiler.time_function
     def get_eval_loss_dict(self, step: int) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:

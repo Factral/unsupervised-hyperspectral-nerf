@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=1 ns-train  umhsnerf \
+CUDA_VISIBLE_DEVICES=2 ns-train  umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
  --pipeline.model.far-plane 1000 \
