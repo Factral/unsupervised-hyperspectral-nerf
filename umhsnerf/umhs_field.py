@@ -63,7 +63,7 @@ class UMHSField(NerfactoField):
                 layer_width=hidden_dim_color,
                 out_dim=wavelengths*num_classes,
                 activation=nn.ReLU(),
-                out_activation=nn.Sigmoid(),
+                out_activation=None,
                 implementation=implementation,
             )
 
@@ -132,7 +132,7 @@ class UMHSField(NerfactoField):
 
             positions =  ray_samples.frustums.get_positions()
             abundances = self.semantic_field(
-                positions.detach(),
+                positions,
                 density_embedding=density_embedding.view(-1, self.geo_feat_dim).detach(),
             )
             abundances = abundances.view(*ray_samples.frustums.directions.shape[:-1], -1)
@@ -142,9 +142,10 @@ class UMHSField(NerfactoField):
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
             endmember_spectra = features * endmembers #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
-            #endmember_spectra = endmember_spectra # (num_classes, ..., wavelengths)
+            endmember_spectra2 = torch.sigmoid(endmember_spectra) # (num_classes, ..., wavelengths)
 
-            spec = (endmember_spectra  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
+            
+            spec = (endmember_spectra2  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
 
             outputs["spectral"] = spec.to(directions)
             outputs["abundances"] = abundances

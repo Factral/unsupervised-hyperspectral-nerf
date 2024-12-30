@@ -40,6 +40,7 @@ class UMHSPipelineConfig(VanillaPipelineConfig):
     """specifies the datamanager config"""
     model: ModelConfig = UMHSConfig()
     """specifies the model config"""
+    check_nan: bool = False
 
 # based on: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/pipelines/base_pipeline.py#L212
 class UMHSPipeline(VanillaPipeline):
@@ -59,7 +60,8 @@ class UMHSPipeline(VanillaPipeline):
         grad_scaler: Optional[GradScaler] = None,
     ):
         super().__init__(config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, grad_scaler=grad_scaler)
-        torch.autograd.set_detect_anomaly(True)
+        if self.config.check_nan:
+            torch.autograd.set_detect_anomaly(True)
 
 
     @profiler.time_function

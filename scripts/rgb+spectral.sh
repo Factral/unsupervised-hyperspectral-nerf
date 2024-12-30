@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=3 ns-train  umhsnerf \
+CUDA_VISIBLE_DEVICES=2 ns-train  umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
  --pipeline.model.far-plane 1000 \
@@ -11,4 +11,4 @@ CUDA_VISIBLE_DEVICES=3 ns-train  umhsnerf \
   --pipeline.model.implementation tcnn \
  --data data/processed/ajar  \
  --experiment-name "rgb+spectral2" \
- --vis viewer+wandb --viewer.websocket-port 7009 \
+ --vis wandb --viewer.websocket-port 7009 \

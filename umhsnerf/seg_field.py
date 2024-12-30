@@ -21,7 +21,7 @@ class SemanticField(FieldComponent):
         wavelengths: int = 21,
         hidden_dim: int = 64,
         implementation: Literal["tcnn", "torch"] = "torch",
-        dropout: float = 0,
+        dropout: float = 0.1,
     ) -> None:
         super().__init__()
 
@@ -53,7 +53,7 @@ class SemanticField(FieldComponent):
             layer_width=hidden_dim,
             out_dim=feature_dim,
             activation=nn.ReLU(),
-            out_activation=None,
+            out_activation=nn.Tanh(),
             implementation=implementation,
         )
 
@@ -102,10 +102,10 @@ class SemanticField(FieldComponent):
         #    - We'll apply them before cross-attn / self-attn
         # ----------------------------------------------------------------------
         self.norm_keyval = nn.LayerNorm(feature_dim)  # for the features
-        self.norm_query = nn.LayerNorm(feature_dim)   # for the endmembers
+        #self.norm_query = nn.LayerNorm(feature_dim)   # for the endmembers
         self.norm_self = nn.LayerNorm(feature_dim)    # for the self-attention input
         self.norm_out = nn.LayerNorm(feature_dim)     # optional final norm
-        self.norm_input = nn.LayerNorm(input_dim)   # for the input features
+        #self.norm_input = nn.LayerNorm(input_dim)   # for the input features
 
     def forward(
         self,
@@ -131,7 +131,6 @@ class SemanticField(FieldComponent):
         features_input = torch.cat([positions_flat, density_embedding], dim=-1)
         # => (N, feature_dim)
 
-        features_input = self.norm_input(features_input)
 
         features = self.feature_mlp(features_input)
 
@@ -147,7 +146,7 @@ class SemanticField(FieldComponent):
         # Cross-Attention (Pre-norm)
         # ----------------------
         # Norm queries
-        x_query = self.norm_query(endmembers_proj)  # shape (1, num_classes, feature_dim)
+        x_query = self.norm_keyval(endmembers_proj)  # shape (1, num_classes, feature_dim)
         # Norm keys/values
         x_keyval = self.norm_keyval(features)        # shape (1, N, feature_dim)
 
@@ -185,7 +184,7 @@ class SemanticField(FieldComponent):
         logits = logits.expand(N, -1)
 
         # convert to probabilities
-        probabilities = F.softmax(logits / 0.5, dim=-1)
+        probabilities = F.softmax(logits, dim=-1)
         #print(probabilities)
         #print(self.endmembers.squeeze())
 
