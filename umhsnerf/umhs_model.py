@@ -399,7 +399,7 @@ class UMHSModel(NerfactoModel):
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                    update_every_num_iters=5,
+                    update_every_num_iters=1,
                     func=clamp_endmembers
                 )
             )

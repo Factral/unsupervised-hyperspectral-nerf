@@ -13,6 +13,7 @@ from nerfstudio.cameras.rays import RaySamples
 from nerfstudio.field_components.mlp import MLP
 from nerfstudio.fields.base_field import get_normalized_directions
 from nerfstudio.field_components.field_heads import FieldHeadNames
+from nerfstudio.field_components.activations import trunc_exp
 
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.seg_field import SemanticField
@@ -62,7 +63,7 @@ class UMHSField(NerfactoField):
                 layer_width=hidden_dim_color,
                 out_dim=wavelengths*num_classes,
                 activation=nn.ReLU(),
-                out_activation=None,
+                out_activation=nn.Sigmoid(),
                 implementation=implementation,
             )
 
@@ -128,7 +129,6 @@ class UMHSField(NerfactoField):
             ) # direction, density features, appeareance embeddings
 
             features = self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes)
-        
 
             positions =  ray_samples.frustums.get_positions()
             abundances = self.semantic_field(
@@ -142,8 +142,8 @@ class UMHSField(NerfactoField):
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
             endmember_spectra = features * endmembers #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
+            #endmember_spectra = endmember_spectra # (num_classes, ..., wavelengths)
 
-            endmember_spectra = torch.clamp(endmember_spectra, 0, 1)
             spec = (endmember_spectra  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
 
             outputs["spectral"] = spec.to(directions)
