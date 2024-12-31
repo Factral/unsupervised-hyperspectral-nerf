@@ -212,7 +212,7 @@ class UMHSModel(NerfactoModel):
             "expected_depth": expected_depth,
         }
 
-        if "rgb" in self.config.method:
+        if self.config.method == "rgb":
             rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
             outputs["rgb"] = rgb
 
@@ -229,6 +229,8 @@ class UMHSModel(NerfactoModel):
             if self.config.method == "spectral":
                 with torch.no_grad():
                     outputs["rgb"] = self.converter(spectral)
+            else:
+                outputs["rgb"] = self.converter(spectral)
 
             #abundances
             with torch.no_grad():
@@ -393,7 +395,7 @@ class UMHSModel(NerfactoModel):
 
             def clamp_endmembers(step):
                 with torch.no_grad():
-                    self.field.semantic_field.endmembers[:] = self.field.semantic_field.endmembers.clamp(0, 1)
+                    self.field.semantic_field.endmembers[:] = self.field.semantic_field.endmembers.clamp(0+1e-6, 1-1e-6)
 
             # callback to clamp between 0 and 1 the endmember parameter
             callbacks.append(

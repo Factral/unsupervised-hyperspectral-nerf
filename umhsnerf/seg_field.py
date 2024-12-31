@@ -91,8 +91,8 @@ class SemanticField(FieldComponent):
         # ----------------------------------------------------------------------
         self.output_layer = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1)
+            nn.GELU(),
+            nn.Linear(hidden_dim, 5)
         )
 
         self.dropout = nn.Dropout(dropout)
@@ -124,25 +124,22 @@ class SemanticField(FieldComponent):
         if density_embedding is None:
             raise ValueError("density_embedding is required")
 
-        # (N, pos_enc_dim)
         positions_flat = self.position_encoding(positions.view(-1, 3))
+        positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
 
-        # Concatenate position + direction embeddings
         features_input = torch.cat([positions_flat, density_embedding], dim=-1)
-        # => (N, feature_dim)
 
-
+        size = features_input.size()
+        features_input = features_input.view(-1, features_input.size(-1))
         features = self.feature_mlp(features_input)
 
-        # 1) Turn features into shape (1, N, feature_dim) for cross-attn
-        features = features.unsqueeze(0)  # => (1, N, feature_dim)
+        features = features.view(*size[:-1], -1)
 
-        # 2) Project endmembers -> shape (num_classes, wavelengths) -> (num_classes, feature_dim)
-        endmembers = self.endmembers.squeeze(1)            # => (num_classes, wavelengths)
+        endmembers = self.endmembers.squeeze(1)         
         endmembers_proj = self.proj_mlp_endmembers(endmembers)
-        endmembers_proj = endmembers_proj.unsqueeze(0)     # => (1, num_classes, feature_dim)
-
+        endmembers_proj = endmembers_proj.unsqueeze(0).repeat(size[0], 1, 1) 
         # ----------------------
+
         # Cross-Attention (Pre-norm)
         # ----------------------
         # Norm queries
@@ -152,40 +149,40 @@ class SemanticField(FieldComponent):
 
         # cross-attention
         attn_output, _ = self.cross_attention(
-            query=x_query,
-            key=x_keyval,
-            value=x_keyval
+            query=x_keyval,
+            key=x_query,
+            value=x_query
         )
+
         # Residual
-        cross_out = endmembers_proj + self.dropout(attn_output)
+        cross_out = features + attn_output
 
         # ----------------------
         # Self-Attention (Pre-norm)
         # ----------------------
         x_self = self.norm_self(cross_out)
+
         refined_output, _ = self.self_attention(
             query=x_self,
             key=x_self,
             value=x_self,
         )
-        final = cross_out + self.dropout(refined_output)
+        final = cross_out + refined_output
 
         # ----------------------
         # Output
         # ----------------------
         # optional final norm
-        final_normed = self.norm_out(final)  # shape (1, num_classes, feature_dim)
+        #final_normed = self.norm_out(final)  # shape (1, num_classes, feature_dim)
 
-        # linear => shape (1, num_classes, 1)
-        logits = self.output_layer(final_normed).squeeze(-1)  # => (1, num_classes)
-        # Expand to match (N, num_classes)
-        # we want shape (N, num_classes) => replicate across the N samples
-        N = features.size(1)
-        logits = logits.expand(N, -1)
 
+        logits = self.output_layer(final)  
+
+        logits = logits.view(*density_embedding.shape[:-1], -1)
         # convert to probabilities
-        probabilities = F.softmax(logits, dim=-1)
-        #print(probabilities)
-        #print(self.endmembers.squeeze())
+        probabilities = F.softmax(logits / 0.5, dim=-1)
+
+        print(probabilities)
+        #import pdb ;pdb.set_trace()
 
         return probabilities

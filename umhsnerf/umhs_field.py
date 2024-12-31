@@ -133,9 +133,8 @@ class UMHSField(NerfactoField):
             positions =  ray_samples.frustums.get_positions()
             abundances = self.semantic_field(
                 positions,
-                density_embedding=density_embedding.view(-1, self.geo_feat_dim).detach(),
+                density_embedding=density_embedding,
             )
-            abundances = abundances.view(*ray_samples.frustums.directions.shape[:-1], -1)
 
             endmembers = self.semantic_field.endmembers  # (num_classes, 1, feature_dim)
             endmembers = endmembers.squeeze().unsqueeze(0).unsqueeze(0)
@@ -143,17 +142,11 @@ class UMHSField(NerfactoField):
 
             endmember_spectra = features * endmembers #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
             endmember_spectra2 = torch.sigmoid(endmember_spectra) # (num_classes, ..., wavelengths)
-
-            
+           
             spec = (endmember_spectra2  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
 
             outputs["spectral"] = spec.to(directions)
-            outputs["abundances"] = abundances
-            
-            if self.method == "rgb+spectral":
-                rgb = self.converter(spec).to(directions)
-                outputs[FieldHeadNames.RGB] = rgb
-
+            outputs["abundances"] = abundances.to(directions)
 
         elif self.method == "rgb":
             # Original RGB prediction
