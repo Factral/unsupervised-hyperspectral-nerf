@@ -132,6 +132,7 @@ class UMHSConfig(NerfactoModelConfig):
     """Average initial density output from MLP. """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
+    temperature: float = 0.2
 
     # custom configs
     method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
@@ -141,6 +142,7 @@ class UMHSModel(NerfactoModel):
     """UMHS Model."""
 
     config: UMHSConfig
+    num_classes: int
 
     def populate_modules(self):
         super().populate_modules()
@@ -181,6 +183,8 @@ class UMHSModel(NerfactoModel):
                 average_init_density=self.config.average_init_density,
                 implementation=self.config.implementation,
                 method=self.config.method,
+                num_classes = self.kwargs["num_classes"],
+                temperature=self.config.temperature
                 )
 
         self.rgb_loss = MSELoss()
@@ -207,13 +211,12 @@ class UMHSModel(NerfactoModel):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
         
-
         weights = get_weights_spectral(ray_samples.deltas, field_outputs[FieldHeadNames.DENSITY].repeat(1,1,21))
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
         with torch.no_grad():
-            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+            depth = self.renderer_depth(weights=weights[:,:,0].unsqueeze(-1), ray_samples=ray_samples)
 
         accumulation = self.renderer_accumulation(weights=weights[:,:,0].unsqueeze(-1))
 
@@ -409,8 +412,13 @@ class UMHSModel(NerfactoModel):
                     fig = plt.figure()
                     ax = fig.add_subplot(111)
                     ax.plot(self.field.endmembers.cpu().detach().T.numpy())
-                    wandb.log({"endmembers": wandb.Image(fig)}, step=step)
+                    wandb.log({"endmembers": wandb.Image(fig), "temperature": self.field.temperature}, step=step)
                     plt.close(fig)
+
+                    if self.step < 3000:
+                        pass
+                    else:
+                        self.field.temperature = max(0.1, 0.2 - (self.step - 3000) * 0.0001)
 
                 # callback to clamp between 0 and 1 the endmember parameter
                 callbacks.append(

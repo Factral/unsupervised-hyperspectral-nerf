@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from nerfstudio.fields.nerfacto_field import NerfactoField
 from nerfstudio.cameras.rays import RaySamples
-from nerfstudio.field_components.mlp import MLP
+from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 from nerfstudio.fields.base_field import get_normalized_directions
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.activations import trunc_exp
@@ -35,6 +35,7 @@ class UMHSField(NerfactoField):
         num_classes: int = 7,
         feature_dim: int = 256,
         num_heads: int = 4,
+        temperature: float = 0.2,
         **kwargs,
     ) -> None:
         super().__init__(aabb=aabb, num_images=num_images,implementation=implementation, **kwargs)
@@ -43,6 +44,7 @@ class UMHSField(NerfactoField):
         self.num_classes = num_classes
         self.wavelengths = wavelengths
         self.feature_dim = feature_dim
+
 
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
@@ -72,6 +74,8 @@ class UMHSField(NerfactoField):
 
             self.converter = ColourSystem()
 
+            self.temperature = temperature
+            
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
     ) -> Dict[Any, Tensor]:
@@ -129,7 +133,9 @@ class UMHSField(NerfactoField):
             features = self.feature_mlp(features_input)
 
             logits = features.view(*size[:-1], -1)
-            abundances = F.softmax(logits / 0.5, dim=-1)
+
+
+            abundances = F.softmax(logits / self.temperature, dim=-1)
 
 
             endmembers = self.endmembers.unsqueeze(0).unsqueeze(0)

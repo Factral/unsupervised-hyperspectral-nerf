@@ -75,8 +75,11 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
         local_rank: int = 0,
+        num_classes: int = 5,
         **kwargs,  # pylint: disable=unused-argument
     ):
+        config.dataparser.num_classes = num_classes
+
         super().__init__(
             config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, **kwargs
         )

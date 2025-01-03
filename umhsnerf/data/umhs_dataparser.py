@@ -103,6 +103,7 @@ class UMHSDataParserConfig(DataParserConfig):
     """Replace the unknown pixels with this color. Relevant if you have a mask but still sample everywhere."""
     load_3D_points: bool = False
     """Whether to load the 3D points from the colmap reconstruction."""
+    num_classes: int = 5
 
 
 @dataclass
@@ -446,6 +447,7 @@ class UMHSDataParser(DataParser):
         CONSOLE.log(f"Loaded {len(image_filenames)} images for {split} split.")
         CONSOLE.log(f"Hyperspectral images: {len(hs_filenames)}, {hs_filenames[:3]}")
 
+        metadata.update({"split": split, "num_classes": self.config.num_classes})
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,

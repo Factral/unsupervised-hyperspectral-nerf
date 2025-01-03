@@ -41,6 +41,7 @@ class UMHSPipelineConfig(VanillaPipelineConfig):
     model: ModelConfig = UMHSConfig()
     """specifies the model config"""
     check_nan: bool = False
+    num_classes: int = 5
 
 # based on: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/pipelines/base_pipeline.py#L212
 class UMHSPipeline(VanillaPipeline):
@@ -59,9 +60,37 @@ class UMHSPipeline(VanillaPipeline):
         local_rank: int = 0,
         grad_scaler: Optional[GradScaler] = None,
     ):
-        super().__init__(config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, grad_scaler=grad_scaler)
-        if self.config.check_nan:
+        super(VanillaPipeline, self).__init__()
+        if config.check_nan:
             torch.autograd.set_detect_anomaly(True)
+
+        self.config = config
+        self.test_mode = test_mode
+
+        self.datamanager: OpenNerfDataManager = config.datamanager.setup(
+            device=device,
+            test_mode=test_mode,
+            world_size=world_size,
+            local_rank=local_rank,
+            num_classes=config.num_classes
+        )
+        self.datamanager.to(device)
+
+        assert self.datamanager.train_dataset is not None, "Missing input dataset"
+
+        self._model = config.model.setup(
+            scene_box=self.datamanager.train_dataset.scene_box,
+            num_train_data=len(self.datamanager.train_dataset),
+            metadata=self.datamanager.train_dataset.metadata,
+            grad_scaler=grad_scaler,
+            num_classes=config.num_classes
+        )
+        self.model.to(device)
+
+        self.world_size = world_size
+        if world_size > 1:
+            self._model = typing.cast(OpenNerfModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
+            dist.barrier(device_ids=[local_rank])
 
 
     @profiler.time_function

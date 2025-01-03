@@ -4,13 +4,14 @@ Hyperspectral dataset.
 
 from typing import Dict
 
-import torch
-
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
 
+import torch
 import numpy as np
 
+from umhsnerf.data.utils.vca import vca
+import os
 
 class HyperspectralDataset(InputDataset):
     """Dataset that returns hyperspectral images.
@@ -19,7 +20,7 @@ class HyperspectralDataset(InputDataset):
         scale_factor: The scaling factor for the dataparser outputs.
     """
 
-    exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device + ["hs_iamge"]
+    exclude_batch_keys_from_device = InputDataset.exclude_batch_keys_from_device
 
 
     def __init__(self, dataparser_outputs: DataparserOutputs, scale_factor: float = 1.0):
@@ -37,5 +38,10 @@ class HyperspectralDataset(InputDataset):
 
         hs_image = np.load(filepath)
         hs_image = torch.tensor(hs_image).float().clamp(0, 1)
+        
+        if not os.path.exists("vca.npy"):
+            pass
+
+        print("hola")
 
         return {"hs_image": hs_image}
