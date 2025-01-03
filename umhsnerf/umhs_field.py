@@ -2,7 +2,7 @@
 UMHS Field with semantic-guided spectral unmixing.
 """
 
-from typing import Literal, Optional, Any, Dict
+from typing import Literal, Optional, Any, Dict, Tuple
 
 import torch
 from torch import Tensor, nn
@@ -16,7 +16,7 @@ from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.activations import trunc_exp
 
 from umhsnerf.utils.spec_to_rgb import ColourSystem
-from umhsnerf.seg_field import SemanticField
+import numpy as np
 
 class UMHSField(NerfactoField):
     """UMHS Field with semantic-guided spectral unmixing."""
@@ -27,12 +27,12 @@ class UMHSField(NerfactoField):
         self,
         aabb: Tensor,
         num_images: int,
-        implementation: Literal["tcnn", "torch"] = "torch",
+        implementation: Literal["tcnn", "torch"] = "tcnn",
         num_layers_color: int = 3,
         hidden_dim_color: int = 64,
         wavelengths: int = 21,
         method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb",
-        num_classes: int = 5,
+        num_classes: int = 7,
         feature_dim: int = 256,
         num_heads: int = 4,
         **kwargs,
@@ -46,28 +46,31 @@ class UMHSField(NerfactoField):
 
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
-            self.semantic_field = SemanticField(
-                position_encoding=self.position_encoding,
-                num_classes=num_classes,
-                feature_dim=feature_dim,
-                num_heads=num_heads,
-                dir_embedding_dim=self.geo_feat_dim,
-                hidden_dim=hidden_dim_color,
+            input_dim = self.position_encoding.get_out_dim() + self.geo_feat_dim
+            self.feature_mlp = MLP(
+                in_dim=input_dim,
+                num_layers=3,
+                layer_width=hidden_dim_color,
+                out_dim=num_classes,
+                activation=nn.ReLU(),
+                out_activation=None, # tanh ?
                 implementation=implementation,
-                wavelengths=wavelengths
             )
+
+            endmembers = np.load("vca.npy")
+            self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32), requires_grad=True)
 
             self.mlp_head = MLP(
                 in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
                 num_layers=num_layers_color,
                 layer_width=hidden_dim_color,
-                out_dim=wavelengths*num_classes,
+                out_dim=num_classes,
                 activation=nn.ReLU(),
                 out_activation=None,
                 implementation=implementation,
             )
 
-        self.converter = ColourSystem()
+            self.converter = ColourSystem()
 
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
@@ -98,21 +101,6 @@ class UMHSField(NerfactoField):
                         (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
                     )
 
-        # Handle transients and other outputs from parent class
-        if self.use_transient_embedding and self.training:
-            embedded_transient = self.embedding_transient(camera_indices)
-            transient_input = torch.cat(
-                [
-                    density_embedding.view(-1, self.geo_feat_dim),
-                    embedded_transient.view(-1, self.transient_embedding_dim),
-                ],
-                dim=-1,
-            )
-            x = self.mlp_transient(transient_input).view(*outputs_shape, -1).to(directions)
-            outputs[FieldHeadNames.UNCERTAINTY] = self.field_head_transient_uncertainty(x)
-            outputs[FieldHeadNames.TRANSIENT_RGB] = self.field_head_transient_rgb(x)
-            outputs[FieldHeadNames.TRANSIENT_DENSITY] = self.field_head_transient_density(x)
-
         # Spectral prediction using semantic unmixing
         if "spectral" in self.method:
 
@@ -128,22 +116,28 @@ class UMHSField(NerfactoField):
                 dim=-1,
             ) # direction, density features, appeareance embeddings
 
-            features = self.mlp_head(h).view(*outputs_shape, self.wavelengths, self.num_classes)
+            scalar = self.mlp_head(h).view(*outputs_shape, -1, self.num_classes)
 
             positions =  ray_samples.frustums.get_positions()
-            abundances = self.semantic_field(
-                positions,
-                density_embedding=density_embedding,
-            )
+            positions_flat = self.position_encoding(positions.view(-1, 3))
+            positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
 
-            endmembers = self.semantic_field.endmembers  # (num_classes, 1, feature_dim)
-            endmembers = endmembers.squeeze().unsqueeze(0).unsqueeze(0)
+            features_input = torch.cat([positions_flat, density_embedding], dim=-1) # positions, density
+
+            size = features_input.size()
+            features_input = features_input.view(-1, features_input.size(-1))
+            features = self.feature_mlp(features_input)
+
+            logits = features.view(*size[:-1], -1)
+            abundances = F.softmax(logits / 0.5, dim=-1)
+
+
+            endmembers = self.endmembers.unsqueeze(0).unsqueeze(0)
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
-            endmember_spectra = features * endmembers #.permute(0, 1, 3, 2)  # (num_classes, ..., wavelengths)
-            endmember_spectra2 = torch.sigmoid(endmember_spectra) # (num_classes, ..., wavelengths)
-           
-            spec = (endmember_spectra2  @ abundances.unsqueeze(-1)).squeeze() # (..., wavelengths)
+            adapted_endmembers = F.sigmoid(scalar) * endmembers # (B, ray_sample, wavelengths, num_classes)
+
+            spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
 
             outputs["spectral"] = spec.to(directions)
             outputs["abundances"] = abundances.to(directions)

@@ -1,10 +1,11 @@
 """
-Template Model File
+Model File
 
 Currently this subclasses the Nerfacto model. Consider subclassing from the base Model.
 """
 
 import torch
+from torch import nn
 from dataclasses import dataclass, field
 from typing import Type
 from typing import Dict, List, Literal, Tuple, Type, Union, Optional
@@ -14,12 +15,12 @@ from tqdm import tqdm
 import random
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
 from nerfstudio.field_components.spatial_distortions import SceneContraction
-from nerfstudio.model_components.renderers import SemanticRenderer
 from nerfstudio.cameras.rays import RayBundle, RaySamples
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.utils import colormaps
@@ -37,12 +38,14 @@ from nerfstudio.model_components.losses import (
     scale_gradients_by_distance_squared,
 )
 
+import wandb
+
 from umhsnerf.umhs_field import UMHSField
 from umhsnerf.data.utils.dino_extractor import ViTExtractor
 from umhsnerf.utils.metrics import mse2psnr
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.utils.hooks import nan_hook
-
+from umhsnerf.umhs_renderer import SpectralRenderer, get_weights_spectral
 
 @dataclass
 class UMHSConfig(NerfactoModelConfig):
@@ -149,6 +152,16 @@ class UMHSModel(NerfactoModel):
 
         appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
 
+        self.class_colors = {
+            0: torch.tensor([0., 0., 0.]),      #  - negro
+            1: torch.tensor([0.9, 0., 0.]),     #  - rojo
+            2: torch.tensor([0., 0.9, 0.]),     #  - verde
+            3: torch.tensor([0., 0., 0.9]),     #  - azul
+            4: torch.tensor([0.9, 0.9, 0.]),    #  - amarillo
+            5: torch.tensor([0., 0.9, 0.9]),    #  - cian
+            6: torch.tensor([0.9, 0., 0.9])     #  - magenta
+            }
+
 
         self.field = UMHSField(  
                 self.scene_box.aabb,
@@ -175,41 +188,38 @@ class UMHSModel(NerfactoModel):
         if 'spectral' in self.config.method:
             # reuse the renderer for spectral
             # definition: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/model_components/renderers.py#L408
-            self.renderer_spectral = SemanticRenderer() 
-            self.renderer_abundances = SemanticRenderer()
+            self.renderer_spectral = SpectralRenderer() 
             self.spectral_loss = MSELoss()
             self.converter = ColourSystem()
 
-        for name, module in self.named_modules():
-            module.register_forward_hook(nan_hook)
-            for child in module.children():
-                child.register_forward_hook(nan_hook)
-
+    def label_to_rgb(self, labels):
+        device = labels.device
+        colors = torch.stack(list(self.class_colors.values())).to(device)
+        return colors[labels.long().squeeze(-1)]
 
     def get_outputs(self, ray_bundle: RayBundle):
         # apply the camera optimizer pose tweaks
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
+        
         ray_samples: RaySamples
+        
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
-        if self.config.use_gradient_scaling:
-            field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
+        
 
-        weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
+        weights = get_weights_spectral(ray_samples.deltas, field_outputs[FieldHeadNames.DENSITY].repeat(1,1,21))
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
 
-        expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
-        accumulation = self.renderer_accumulation(weights=weights)
+        accumulation = self.renderer_accumulation(weights=weights[:,:,0].unsqueeze(-1))
 
         outputs = {
             "accumulation": accumulation,
             "depth": depth,
-            "expected_depth": expected_depth,
         }
 
         if self.config.method == "rgb":
@@ -217,9 +227,7 @@ class UMHSModel(NerfactoModel):
             outputs["rgb"] = rgb
 
         if "spectral" in self.config.method:
-            spectral = self.renderer_spectral(
-                semantics=field_outputs["spectral"], weights=weights
-            )
+            spectral = self.renderer_spectral(spectral=field_outputs["spectral"], weights=weights)
 
             outputs["spectral"] = spectral
             for i in range(spectral.shape[-1]):
@@ -232,13 +240,16 @@ class UMHSModel(NerfactoModel):
             else:
                 outputs["rgb"] = self.converter(spectral)
 
-            #abundances
             with torch.no_grad():
-                abundances = self.renderer_abundances(
-                    semantics=field_outputs["abundances"], weights=weights
+                abundaces = self.renderer_spectral(
+                    spectral=field_outputs["abundances"], weights=weights[:,:,:7]
                 )
-            for i in range(abundances.shape[-1]):
-                outputs[f"abundance_{i}"] = abundances[..., i]
+
+                outputs["abundances"] = abundaces
+                outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
+                for i in range(field_outputs["abundances"].shape[-1]):
+                    outputs[f"abundances_{i}"] = abundaces[:,i]
+
 
         if self.training:
             outputs["weights_list"] = weights_list
@@ -257,19 +268,16 @@ class UMHSModel(NerfactoModel):
         gt_spectral = batch["hs_image"].to(self.device)
 
         if "rgb" in self.config.method:
-            pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-                pred_image=outputs["rgb"],
-                pred_accumulation=outputs["accumulation"],
-                gt_image=image,
-            )
+            pred_rgb, gt_rgb = outputs["rgb"], image
 
         if self.config.method == "rgb":
             loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
         elif self.config.method == "spectral":
-            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
+            loss_dict["spectral_loss"] = self.spectral_loss(outputs["spectral"], gt_spectral)
         elif self.config.method == "rgb+spectral":
-            loss_dict["spectral_loss"] = self.spectral_loss(gt_spectral, outputs["spectral"])
-            loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+            loss_dict["spectral_loss"] = self.spectral_loss(outputs["spectral"], gt_spectral)
+            loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
+
         
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
@@ -393,17 +401,24 @@ class UMHSModel(NerfactoModel):
                 )
             )
 
-            def clamp_endmembers(step):
-                with torch.no_grad():
-                    self.field.semantic_field.endmembers[:] = self.field.semantic_field.endmembers.clamp(0+1e-6, 1-1e-6)
+            if self.config.method != "rgb":
+                def clamp_endmembers(step):
+                    with torch.no_grad():
+                        self.field.endmembers[:] = self.field.endmembers.clamp(0, 1)
 
-            # callback to clamp between 0 and 1 the endmember parameter
-            callbacks.append(
-                TrainingCallback(
-                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                    update_every_num_iters=1,
-                    func=clamp_endmembers
+                    fig = plt.figure()
+                    ax = fig.add_subplot(111)
+                    ax.plot(self.field.endmembers.cpu().detach().T.numpy())
+                    wandb.log({"endmembers": wandb.Image(fig)}, step=step)
+                    plt.close(fig)
+
+                # callback to clamp between 0 and 1 the endmember parameter
+                callbacks.append(
+                    TrainingCallback(
+                        where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
+                        update_every_num_iters=1,
+                        func=clamp_endmembers
+                    )
                 )
-            )
 
         return callbacks

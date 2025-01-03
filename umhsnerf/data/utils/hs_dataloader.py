@@ -36,6 +36,6 @@ class HyperspectralDataset(InputDataset):
         filepath = self.hs_filenames[data["image_idx"]]
 
         hs_image = np.load(filepath)
-        hs_image = torch.tensor(hs_image)
-        
-        return {"hs_image": hs_image.float()}
+        hs_image = torch.tensor(hs_image).float().clamp(0, 1)
+
+        return {"hs_image": hs_image}
