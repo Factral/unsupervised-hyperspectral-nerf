@@ -59,10 +59,10 @@ COLOR_SPACE = {
 }
 
 class ColourSystem(nn.Module):
-    def __init__(self, start=450, end=650, num=21, cs='sRGB', device='cuda'):
+    def __init__(self, bands, cs='sRGB', device='cuda'):
         super().__init__()
 
-        bands = np.linspace(start=start, stop=end, num=num) * 10
+        bands = np.array(bands) * 10
         cmf = np.array([component_x(bands), component_y(bands), component_z(bands)])
 
         red, green, blue, white = COLOR_SPACE[cs]
@@ -80,6 +80,8 @@ class ColourSystem(nn.Module):
             'transform_matrix',
             torch.from_numpy(RGB).float()
         )
+
+        #self.transform_matrix_learnable = nn.Parameter(torch.rand_like(self.transform_matrix), requires_grad=True)
 
     def gamma_correction(self, x):
         result = torch.where(

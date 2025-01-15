@@ -27,6 +27,7 @@ from nerfstudio.utils import colormaps
 from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
+from nerfstudio.model_components.scene_colliders import NearFarCollider, AABBBoxCollider
 
 
 from nerfstudio.model_components.losses import (
@@ -46,6 +47,7 @@ from umhsnerf.utils.metrics import mse2psnr
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.utils.hooks import nan_hook
 from umhsnerf.umhs_renderer import SpectralRenderer, get_weights_spectral
+
 
 @dataclass
 class UMHSConfig(NerfactoModelConfig):
@@ -111,7 +113,7 @@ class UMHSConfig(NerfactoModelConfig):
     use_appearance_embedding: bool = True
     """Whether to use an appearance embedding."""
     use_average_appearance_embedding: bool = True
-    """Whether to use average appearance embedding or zeros for inference."""
+    """Whether to use average appearance embedding or bibe for inference."""
     proposal_weights_anneal_slope: float = 10.0
     """Slope of the annealing function for the proposal weights."""
     proposal_weights_anneal_max_num_iters: int = 1000
@@ -132,17 +134,22 @@ class UMHSConfig(NerfactoModelConfig):
     """Average initial density output from MLP. """
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
-    temperature: float = 0.2
 
     # custom configs
     method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
+
+    # weight rgb loss
+    rgb_loss_weight: float = 1.0
+    # weight spectral loss
+    spectral_loss_weight: float = 1.0
+    # temperature
+    temperature: float = 0.2
 
 
 class UMHSModel(NerfactoModel):
     """UMHS Model."""
 
     config: UMHSConfig
-    num_classes: int
 
     def populate_modules(self):
         super().populate_modules()
@@ -164,6 +171,12 @@ class UMHSModel(NerfactoModel):
             6: torch.tensor([0.9, 0., 0.9])     #  - magenta
             }
 
+        if 'spectral' in self.config.method:
+            self.renderer_spectral = SpectralRenderer() 
+            self.spectral_loss = MSELoss()
+        self.converter = ColourSystem(bands=self.kwargs["wavelengths"], cs='sRGB')
+        
+        self.rgb_loss = MSELoss()
 
         self.field = UMHSField(  
                 self.scene_box.aabb,
@@ -183,18 +196,15 @@ class UMHSModel(NerfactoModel):
                 average_init_density=self.config.average_init_density,
                 implementation=self.config.implementation,
                 method=self.config.method,
+                wavelengths=len(self.kwargs["wavelengths"]) if 'spectral' in self.config.method else 0,
                 num_classes = self.kwargs["num_classes"],
-                temperature=self.config.temperature
+                temperature=self.config.temperature,
+                converter = self.converter
                 )
 
-        self.rgb_loss = MSELoss()
+        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        #self.collider = AABBBoxCollider(self.scene_box)
 
-        if 'spectral' in self.config.method:
-            # reuse the renderer for spectral
-            # definition: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/model_components/renderers.py#L408
-            self.renderer_spectral = SpectralRenderer() 
-            self.spectral_loss = MSELoss()
-            self.converter = ColourSystem()
 
     def label_to_rgb(self, labels):
         device = labels.device
@@ -211,14 +221,14 @@ class UMHSModel(NerfactoModel):
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
         field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
         
-        weights = get_weights_spectral(ray_samples.deltas, field_outputs[FieldHeadNames.DENSITY].repeat(1,1,21))
+        weights = get_weights_spectral(ray_samples.deltas, field_outputs[FieldHeadNames.DENSITY])
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
         with torch.no_grad():
-            depth = self.renderer_depth(weights=weights[:,:,0].unsqueeze(-1), ray_samples=ray_samples)
+            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
 
-        accumulation = self.renderer_accumulation(weights=weights[:,:,0].unsqueeze(-1))
+        accumulation = self.renderer_accumulation(weights=weights)
 
         outputs = {
             "accumulation": accumulation,
@@ -243,16 +253,16 @@ class UMHSModel(NerfactoModel):
             else:
                 outputs["rgb"] = self.converter(spectral)
 
+            #render abundances
             with torch.no_grad():
-                abundaces = self.renderer_spectral(
-                    spectral=field_outputs["abundances"], weights=weights[:,:,:7]
-                )
-
+                abundaces = self.renderer_spectral(spectral=field_outputs["abundances"], weights=weights)
                 outputs["abundances"] = abundaces
                 outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
                 for i in range(field_outputs["abundances"].shape[-1]):
                     outputs[f"abundances_{i}"] = abundaces[:,i]
 
+            #dino = self.renderer_spectral(spectral=field_outputs["dino"], weights=weights.detach())
+            #outputs["dino"] = dino
 
         if self.training:
             outputs["weights_list"] = weights_list
@@ -268,20 +278,26 @@ class UMHSModel(NerfactoModel):
         loss_dict = {}
 
         image = batch["image"].to(self.device)
-        gt_spectral = batch["hs_image"].to(self.device)
+        if "spectral" in self.config.method:
+            gt_spectral = batch["hs_image"].to(self.device)
 
-        if "rgb" in self.config.method:
-            pred_rgb, gt_rgb = outputs["rgb"], image
+        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
+            pred_image=outputs["rgb"],
+            pred_accumulation=outputs["accumulation"],
+            gt_image=image,
+        )
 
         if self.config.method == "rgb":
-            loss_dict["rgb_loss"] = self.rgb_loss(gt_rgb, pred_rgb)
+            loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
         elif self.config.method == "spectral":
             loss_dict["spectral_loss"] = self.spectral_loss(outputs["spectral"], gt_spectral)
         elif self.config.method == "rgb+spectral":
-            loss_dict["spectral_loss"] = self.spectral_loss(outputs["spectral"], gt_spectral)
-            loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
+            loss_dict["spectral_loss"] =  self.config.spectral_loss_weight * self.spectral_loss(outputs["spectral"], gt_spectral) 
+            loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
 
-        
+            #loss_dict["dino_loss"] = ( 1.0 - torch.nn.functional.cosine_similarity(outputs["dino"], batch["dino_feat"]) ).sum(dim=-1).nanmean()
+            #loss_dict["dino_mse"] = torch.nn.functional.mse_loss(outputs["dino"], batch["dino_feat"]).nanmean()
+    
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["weights_list"], outputs["ray_samples_list"]
@@ -302,6 +318,10 @@ class UMHSModel(NerfactoModel):
         predicted_rgb = outputs["rgb"]
         metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
 
+        if "spectral" in self.config.method:
+            gt_spectral = batch["hs_image"].to(self.device)
+            metrics_dict["psnr_spectral"] = self.psnr(outputs["spectral"], gt_spectral)
+
         if self.training:
             metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
 
@@ -315,6 +335,7 @@ class UMHSModel(NerfactoModel):
         
         gt_rgb = batch["image"].to(self.device)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
+
 
         predicted_rgb = outputs["rgb"]
 
@@ -332,6 +353,12 @@ class UMHSModel(NerfactoModel):
         gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
         predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
 
+        if "spectral" in self.config.method:
+            gt_spectral = batch["hs_image"].to(self.device)
+            gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
+            predicted_spectral = outputs["spectral"]
+            predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
+
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
         lpips = self.lpips(gt_rgb, predicted_rgb)
@@ -341,6 +368,10 @@ class UMHSModel(NerfactoModel):
         # all of these metrics will be logged as scalars
         metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
         metrics_dict["lpips"] = float(lpips)
+
+        if "spectral" in self.config.method:
+            psnr_spectral = self.psnr(gt_spectral, predicted_spectral)
+            metrics_dict["psnr_spectral"] = float(psnr_spectral.item())
 
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
@@ -415,10 +446,9 @@ class UMHSModel(NerfactoModel):
                     wandb.log({"endmembers": wandb.Image(fig), "temperature": self.field.temperature}, step=step)
                     plt.close(fig)
 
-                    if self.step < 3000:
-                        pass
-                    else:
-                        self.field.temperature = max(0.1, 0.2 - (self.step - 3000) * 0.0001)
+                    #each 100 iteration save the endmembers a npy
+                    if self.step % 100 == 0:
+                        np.save(f"endmembers.npy", self.field.endmembers.cpu().detach().numpy())
 
                 # callback to clamp between 0 and 1 the endmember parameter
                 callbacks.append(

@@ -1,0 +1,13 @@
+CUDA_VISIBLE_DEVICES=2 ns-train nerfacto \
+ --machine.seed 42 \
+ --log-gradients True \
+ --pipeline.model.far-plane 1000 \
+ --pipeline.model.near_plane 0.05 \
+ --pipeline.model.background-color random \
+ --pipeline.datamanager.images-on-gpu True \
+ --pipeline.datamanager.patch-size 1 \
+ --pipeline.datamanager.train-num-rays-per-batch 8192 \
+  --pipeline.model.implementation tcnn \
+ --data data/processed/cbox_dragon  \
+ --experiment-name "cbox_dragon" \
+ --vis wandb --viewer.websocket-port 7007 \

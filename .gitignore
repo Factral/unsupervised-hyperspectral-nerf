@@ -13,11 +13,18 @@ data/ajar_adapted2/*
 data/cbox_dragon/*
 data/processed/*
 data/*
+vca*
+
+renders/*
+
+endmembers.npy
+endmembers.png
 
 vca.npy
 vca.png
 segmentation_map.png
 segmentation_map.npy
+test_spectral.py
 naive_seg.py
 
 features/*

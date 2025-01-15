@@ -12,9 +12,7 @@ class SpectralRenderer(SemanticRenderer):
     def forward(
         cls,
         spectral: Float[Tensor, "*bs num_samples num_classes"],
-        weights: Float[Tensor, "*bs num_samples 1"],
-        ray_indices: Optional[Int[Tensor, "num_samples"]] = None,
-        num_rays: Optional[int] = None,
+        weights: Float[Tensor, "*bs num_samples 1"]
     ) -> Float[Tensor, "*bs num_classes"]:
         """Calculate spectral along the ray."""
         return torch.sum(weights * spectral, dim=-2)

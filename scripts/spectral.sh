@@ -11,4 +11,4 @@ CUDA_VISIBLE_DEVICES=1 ns-train  umhsnerf \
  --pipeline.model.implementation tcnn \
  --data data/processed/ajar  \
  --experiment-name "spectral only try" \
- --vis viewer+wandb --viewer.websocket-port 7008 \
+ --vis viewer --viewer.websocket-port 7008 \

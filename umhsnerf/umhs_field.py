@@ -17,6 +17,8 @@ from nerfstudio.field_components.activations import trunc_exp
 
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 import numpy as np
+import tinycudann as tcnn
+
 
 class UMHSField(NerfactoField):
     """UMHS Field with semantic-guided spectral unmixing."""
@@ -30,12 +32,13 @@ class UMHSField(NerfactoField):
         implementation: Literal["tcnn", "torch"] = "tcnn",
         num_layers_color: int = 3,
         hidden_dim_color: int = 64,
-        wavelengths: int = 21,
+        wavelengths: int = 128,
         method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb",
         num_classes: int = 7,
         feature_dim: int = 256,
-        num_heads: int = 4,
-        temperature: float = 0.2,
+        temperature: float = 0.5,
+        converter: ColourSystem = None,
+        pred_dino: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(aabb=aabb, num_images=num_images,implementation=implementation, **kwargs)
@@ -44,7 +47,6 @@ class UMHSField(NerfactoField):
         self.num_classes = num_classes
         self.wavelengths = wavelengths
         self.feature_dim = feature_dim
-
 
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
@@ -59,8 +61,14 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
 
-            endmembers = np.load("vca.npy")
-            self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32), requires_grad=True)
+            if self.training:
+                endmembers = np.load("vca.npy")
+                self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32), requires_grad=True)
+                #self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
+            else:
+                # will be loaded from the checkpoint
+                self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
+
 
             self.mlp_head = MLP(
                 in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
@@ -72,9 +80,51 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
 
-            self.converter = ColourSystem()
+            self.converter = converter
 
             self.temperature = temperature
+
+            self.pred_dino = pred_dino
+            if pred_dino:
+                grid_layers = (12,12)
+                grid_sizes = (19, 19)
+                grid_resolutions = ((16, 128), (128, 512))
+
+                self.encs = torch.nn.ModuleList(
+                    [
+                        UMHSField._get_encoding(
+                            grid_resolutions[i][0], grid_resolutions[i][1], grid_layers[i], indim=3, hash_size=grid_sizes[i]
+                        )
+                        for i in range(len(grid_layers))
+                    ]
+                )
+                tot_out_dims = sum([e.n_output_dims for e in self.encs])
+            
+                self.dino_mlp = MLP(
+                    in_dim=self.geo_feat_dim + self.direction_encoding.get_out_dim(),
+                    num_layers=2,
+                    layer_width=256,
+                    out_dim=128, # dinov2 dim feaup
+                    activation=nn.ReLU(),
+                    out_activation=None,
+                    implementation=implementation,
+                )
+
+    @staticmethod
+    def _get_encoding(start_res, end_res, levels, indim=3, hash_size=19):
+        growth = np.exp((np.log(end_res) - np.log(start_res)) / (levels - 1))
+        enc = tcnn.Encoding(
+            n_input_dims=indim,
+            encoding_config={
+                "otype": "HashGrid",
+                "n_levels": levels,
+                "n_features_per_level": 8,
+                "log2_hashmap_size": hash_size,
+                "base_resolution": start_res,
+                "per_level_scale": growth,
+            },
+        )
+        return enc
             
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
@@ -119,7 +169,6 @@ class UMHSField(NerfactoField):
                 ),
                 dim=-1,
             ) # direction, density features, appeareance embeddings
-
             scalar = self.mlp_head(h).view(*outputs_shape, -1, self.num_classes)
 
             positions =  ray_samples.frustums.get_positions()
@@ -134,19 +183,34 @@ class UMHSField(NerfactoField):
 
             logits = features.view(*size[:-1], -1)
 
-
             abundances = F.softmax(logits / self.temperature, dim=-1)
 
-
             endmembers = self.endmembers.unsqueeze(0).unsqueeze(0)
+    
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
-            adapted_endmembers = F.sigmoid(scalar) * endmembers # (B, ray_sample, wavelengths, num_classes)
+            scalar = F.sigmoid(scalar)
+            #scalar = F.relu(scalar)
 
+            adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
+            print(spec.shape)
 
             outputs["spectral"] = spec.to(directions)
             outputs["abundances"] = abundances.to(directions)
+
+            if self.pred_dino:
+                #positions = self.spatial_distortion(positions)
+                #positions = (positions + 2.0) / 4.0
+                # First concatenate the list of encodings
+                #xs = torch.cat([e(positions.detach().view(-1, 3)) for e in self.encs], dim=-1)
+                xs = density_embedding.view(-1, self.geo_feat_dim).detach()
+                # Then concatenate with d
+                x = torch.cat([d.detach(), xs], dim=-1)
+                pred = self.dino_mlp(x).view(*outputs_shape, 128).to(directions)
+
+                outputs["dino"] = pred
+
 
         elif self.method == "rgb":
             # Original RGB prediction
@@ -165,3 +229,4 @@ class UMHSField(NerfactoField):
             outputs[FieldHeadNames.RGB] = rgb
 
         return outputs
+

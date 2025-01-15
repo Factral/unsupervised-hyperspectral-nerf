@@ -84,7 +84,7 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
             config=config, device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank, **kwargs
         )
 
-        if self.config.patch_size > 1:
+        if self.config.patch_size > 70:
             images = [self.train_dataset[i]["image"].permute(2, 0, 1)[None, ...] for i in range(len(self.train_dataset))]
             images = torch.cat(images)
 

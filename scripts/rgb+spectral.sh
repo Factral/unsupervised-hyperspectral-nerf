@@ -1,15 +1,17 @@
-CUDA_VISIBLE_DEVICES=0 ns-train  umhsnerf \
+CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
- --pipeline.num_classes 7 \
+ --pipeline.num_classes 5 \
  --pipeline.model.far-plane 1000 \
  --pipeline.model.near_plane 0.05 \
  --pipeline.model.background-color random \
+ --pipeline.model.spectral_loss_weight 4.0 \
+ --pipeline.model.temperature 0.3 \
  --pipeline.datamanager.images-on-gpu True \
  --pipeline.datamanager.patch-size 1 \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method rgb+spectral \
  --pipeline.model.implementation tcnn \
- --data data/processed/ajar  \
- --experiment-name "temperature 0.2" \
- --vis wandb --viewer.websocket-port 7009 \
+ --data data/processed/cbox_sphere/  \
+ --experiment-name "cbox_sphere" \
+ --vis viewer+wandb --viewer.websocket-port 7007 \

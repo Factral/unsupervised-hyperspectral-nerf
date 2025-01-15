@@ -132,6 +132,7 @@ def read_exr_as_np(fn):
 def color_mapping(PATH, OBJECT, wavelength, FILE, split, scalar=1, s123_min=-1, s123_max=1):
    img_path = f"{PATH}/{OBJECT}/{wavelength}/{split}/{FILE}"
    image, _ = read_exr_as_np(img_path)
+   print(img_path, image.shape)
    stokes = np.clip(image, -1, 1)
    s = stokes[..., 0]
    return s
@@ -142,16 +143,15 @@ def spec_to_rgb(img_path, save_path, view, split):
     cube = np.zeros((512, 512, len(wvls)))
     
     for i, wvl in enumerate(wvls):
-        print(f'processing wavelength {wvl}')
         s = color_mapping("./", img_path, wvl, f"{view}.exr", split)
         cube[..., i] = s
     
     os.makedirs(save_path, exist_ok=True)
     np.save(os.path.join(save_path, f"{view}.npy"), cube)
 
+    cube = cube.clip(0, 1)
     # Vectorized operations
     spectorgb = ColourSystem(cs='sRGB')
-    cube = cube.clip(0, 1)
     rgb = spectorgb.spec_to_rgb(cube.reshape(-1, cube.shape[-1]))
     
     rgb = rgb.clip(0, 1)
@@ -163,24 +163,33 @@ def spec_to_rgb(img_path, save_path, view, split):
 
 
 def main():
-   parser = argparse.ArgumentParser()
-   parser.add_argument('--split', type=str, choices=['train', 'val'], required=True)
-   parser.add_argument('--scene', type=str, required=True, help='Scene name (e.g. ajar)')
-   args = parser.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--split', type=str, choices=['train', 'val', 'test'], required=True)
+    parser.add_argument('--scene', type=str, required=True, help='Scene name (e.g. ajar)')
+    args = parser.parse_args()
 
-   # Create processed directory if not exists 
-   os.makedirs(f"./processed/{args.scene}/{args.split}/", exist_ok=True)
-   
-   idxs = list(range(54))
-   if args.split == "train":
-       remove_idx = [0,8,16,24,32,40,48]
-       idxs = [i for i in idxs if i not in remove_idx]
-   else:  # val
-       idxs = [0,8,16,24,32,40,48]
+    # Create processed directory if not exists 
+    
+    if args.scene == "ajar" or args.scene == "cbox_sphere" or args.scene == "cbox_dragon":
+        idxs = list(range(43))
+        if args.split == "train":
+            remove_idx = [0,8,16,24,32,40,48]
+            idxs = [i for i in idxs if i not in remove_idx]
+        else:  # val
+            idxs = [0,8,16,24,32,40,48]
+    else:
+        idxs = list(range(200))
 
-   for k in idxs:
-       spec_to_rgb(args.scene, f"./processed/{args.scene}/{args.split}/",
-                  "r_{}".format(k), args.split)
+    if args.split == 'test' or args.split == 'val':
+        savefolder = 'eval'
+    else:
+        savefolder = args.split
+
+    os.makedirs(f"./processed/{args.scene}/{savefolder}/", exist_ok=True)
+
+    for k in idxs:
+        spec_to_rgb(f"nespof/{args.scene}", f"./processed/{args.scene}/{savefolder}/",
+                    "r_{}".format(k), args.split)
 
 
 if __name__ == "__main__":

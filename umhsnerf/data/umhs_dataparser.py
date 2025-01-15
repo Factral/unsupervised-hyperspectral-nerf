@@ -128,6 +128,7 @@ class UMHSDataParser(DataParser):
         mask_filenames = []
         depth_filenames = []
         hs_filenames = []
+        dino_filenames = []
         poses = []
         
 
@@ -217,6 +218,11 @@ class UMHSDataParser(DataParser):
                 hs_fname = self._get_fname(hs_filepath, data_dir, downsample_folder_prefix="hs_")
                 hs_filenames.append(hs_fname)
 
+            if "dino_file_path" in frame:
+                dino_filepath = Path(frame["dino_file_path"])
+                dino_fname = self._get_fname(dino_filepath, data_dir, downsample_folder_prefix="dino_")
+                dino_filenames.append(dino_fname)
+
         assert len(mask_filenames) == 0 or (len(mask_filenames) == len(image_filenames)), """
         Different number of image and mask filenames.
         You should check that mask_path is specified for every frame (or zero frames) in transforms.json.
@@ -228,6 +234,10 @@ class UMHSDataParser(DataParser):
         assert len(hs_filenames) == 0 or (len(hs_filenames) == len(image_filenames)), """
         Different number of image and hyperspectral filenames.
         You should check that hyperspectral_file_path is specified for every frame (or zero frames) in transforms.json.
+        """
+        assert len(dino_filenames) == 0 or (len(dino_filenames) == len(image_filenames)), """
+        Different number of image and dino filenames.
+        You should check that dino_file_path is specified for every frame (or zero frames) in transforms.json.
         """
 
         has_split_files_spec = any(f"{split}_filenames" in meta for split in ("train", "val", "test"))
@@ -292,6 +302,11 @@ class UMHSDataParser(DataParser):
         mask_filenames = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
         depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
         hs_filenames = [hs_filenames[i] for i in indices] if len(hs_filenames) > 0 else []
+        dino_filenames = [dino_filenames[i] for i in indices] if len(dino_filenames) > 0 else []
+
+        if len(hs_filenames) > 0:
+            assert "wavelengths" in meta, "Wavelengths not specified in metadata"
+            wavelengths = [int(x) for x in meta["wavelengths"]]
 
         idx_tensor = torch.tensor(indices, dtype=torch.long)
         poses = poses[idx_tensor]
@@ -446,8 +461,10 @@ class UMHSDataParser(DataParser):
 
         CONSOLE.log(f"Loaded {len(image_filenames)} images for {split} split.")
         CONSOLE.log(f"Hyperspectral images: {len(hs_filenames)}, {hs_filenames[:3]}")
+        CONSOLE.log(f"DINO features: {len(dino_filenames)}, {dino_filenames[:3]}")
 
-        metadata.update({"split": split, "num_classes": self.config.num_classes})
+        metadata.update({"split": split, "num_classes": self.config.num_classes, "wavelengths": wavelengths})
+        metadata.update({"height": height, "width": width})
 
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
@@ -461,6 +478,7 @@ class UMHSDataParser(DataParser):
                 "depth_unit_scale_factor": self.config.depth_unit_scale_factor,
                 "mask_color": self.config.mask_color,
                 "hs_filenames": hs_filenames if len(hs_filenames) > 0 else None,
+                "dino_filenames": dino_filenames if len(dino_filenames) > 0 else None,
                 **metadata,
             },
         )

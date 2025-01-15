@@ -1,5 +1,5 @@
 """
-Nerfstudio Template Pipeline
+Nerfstudio UMHS Pipeline
 """
 
 import typing
@@ -22,7 +22,6 @@ from nerfstudio.pipelines.base_pipeline import (
     VanillaPipelineConfig,
 )
 from nerfstudio.utils import profiler
-
 
 from umhsnerf.data.umhs_datamanager import UMHSDataManagerConfig
 from umhsnerf.umhs_model import UMHSModel, UMHSConfig
@@ -83,7 +82,8 @@ class UMHSPipeline(VanillaPipeline):
             num_train_data=len(self.datamanager.train_dataset),
             metadata=self.datamanager.train_dataset.metadata,
             grad_scaler=grad_scaler,
-            num_classes=config.num_classes
+            num_classes=config.num_classes,
+            wavelengths=self.datamanager.train_dataparser_outputs.metadata.get("wavelengths", None)
         )
         self.model.to(device)
 
@@ -91,6 +91,8 @@ class UMHSPipeline(VanillaPipeline):
         if world_size > 1:
             self._model = typing.cast(OpenNerfModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
+            
+
 
 
     @profiler.time_function
