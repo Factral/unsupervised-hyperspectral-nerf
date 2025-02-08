@@ -8,6 +8,6 @@ CUDA_VISIBLE_DEVICES=2 ns-train nerfacto \
  --pipeline.datamanager.patch-size 1 \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
   --pipeline.model.implementation tcnn \
- --data data/processed/cbox_dragon  \
- --experiment-name "cbox_dragon" \
+ --data data/processed/hotdog  \
+ --experiment-name "hotdog" \
  --vis wandb --viewer.websocket-port 7007 \

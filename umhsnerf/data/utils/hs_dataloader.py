@@ -47,7 +47,7 @@ class HyperspectralDataset(InputDataset):
             dino_filepath = self.dino_filenames[data["image_idx"]]
             dino_feat = torch.load(dino_filepath).permute(1, 2, 0) # H, W, C
             # normalize dino_feat along unit sphere
-            dino_feat = dino_feat / torch.norm(dino_feat, dim=-1, keepdim=True)
+            #dino_feat = dino_feat / torch.norm(dino_feat, dim=-1, keepdim=True)
 
             return {"hs_image": hs_image, "dino_feat": dino_feat}
 

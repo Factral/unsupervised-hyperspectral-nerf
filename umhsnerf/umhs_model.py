@@ -28,6 +28,8 @@ from nerfstudio.cameras.cameras import Cameras
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.model_components.scene_colliders import NearFarCollider, AABBBoxCollider
+from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
+
 
 
 from nerfstudio.model_components.losses import (
@@ -47,6 +49,7 @@ from umhsnerf.utils.metrics import mse2psnr
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.utils.hooks import nan_hook
 from umhsnerf.umhs_renderer import SpectralRenderer, get_weights_spectral
+from umhsnerf.utils.clusterprobe import ClusterLookup
 
 
 @dataclass
@@ -145,6 +148,8 @@ class UMHSConfig(NerfactoModelConfig):
     # temperature
     temperature: float = 0.2
 
+    pred_dino: bool = False
+
 
 class UMHSModel(NerfactoModel):
     """UMHS Model."""
@@ -199,11 +204,17 @@ class UMHSModel(NerfactoModel):
                 wavelengths=len(self.kwargs["wavelengths"]) if 'spectral' in self.config.method else 0,
                 num_classes = self.kwargs["num_classes"],
                 temperature=self.config.temperature,
-                converter = self.converter
+                converter = self.converter,
+                pred_dino = self.config.pred_dino,
                 )
 
         self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
         #self.collider = AABBBoxCollider(self.scene_box)
+
+        #self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
+        #self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
+        self.cluster_probe = ClusterLookup(128, self.kwargs["num_classes"])
+
 
 
     def label_to_rgb(self, labels):
@@ -211,8 +222,8 @@ class UMHSModel(NerfactoModel):
         colors = torch.stack(list(self.class_colors.values())).to(device)
         return colors[labels.long().squeeze(-1)]
 
+
     def get_outputs(self, ray_bundle: RayBundle):
-        # apply the camera optimizer pose tweaks
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
         
@@ -229,6 +240,11 @@ class UMHSModel(NerfactoModel):
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
 
         accumulation = self.renderer_accumulation(weights=weights)
+
+
+
+
+
 
         outputs = {
             "accumulation": accumulation,
@@ -261,8 +277,18 @@ class UMHSModel(NerfactoModel):
                 for i in range(field_outputs["abundances"].shape[-1]):
                     outputs[f"abundances_{i}"] = abundaces[:,i]
 
-            #dino = self.renderer_spectral(spectral=field_outputs["dino"], weights=weights.detach())
-            #outputs["dino"] = dino
+            if self.config.pred_dino:
+                dino = self.renderer_spectral(spectral=field_outputs["dino"], weights=weights.detach())
+                outputs["dino"] = dino
+
+                #xs = torch.cat([outputs["dino"].detach(), outputs["spectral"]], dim=-1)
+                #xs = outputs["spectral"].detach()
+                xs = outputs["dino"].detach()
+                inner_products, cluster_probs = self.cluster_probe(xs, alpha=None)
+                outputs["cluster_probs"] = cluster_probs
+                cluster_probs = self.label_to_rgb(cluster_probs.argmax(1))
+                outputs["cluster_probs_seg"] = cluster_probs
+                outputs["inner_products"] = inner_products
 
         if self.training:
             outputs["weights_list"] = weights_list
@@ -281,23 +307,34 @@ class UMHSModel(NerfactoModel):
         if "spectral" in self.config.method:
             gt_spectral = batch["hs_image"].to(self.device)
 
+        #pred_spectral, gt_spectral = self.renderer_spectral.blend_background_for_loss_computation(
+        #    pred_image=outputs["spectral"],
+        #    pred_accumulation=outputs["accumulation"],
+        #    gt_image=gt_spectral,
+        #    rgba_image=image
+        #)
+
         pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
             pred_accumulation=outputs["accumulation"],
-            gt_image=image,
+            gt_image=image
         )
 
         if self.config.method == "rgb":
             loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
         elif self.config.method == "spectral":
-            loss_dict["spectral_loss"] = self.spectral_loss(outputs["spectral"], gt_spectral)
+            loss_dict["spectral_loss"] = self.spectral_loss(pred_spectral, gt_spectral)
         elif self.config.method == "rgb+spectral":
             loss_dict["spectral_loss"] =  self.config.spectral_loss_weight * self.spectral_loss(outputs["spectral"], gt_spectral) 
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
 
+        if self.config.pred_dino:
+            loss_dict["dino_mse"] = torch.nn.functional.mse_loss(outputs["dino"], batch["dino_feat"]).nanmean()
             #loss_dict["dino_loss"] = ( 1.0 - torch.nn.functional.cosine_similarity(outputs["dino"], batch["dino_feat"]) ).sum(dim=-1).nanmean()
-            #loss_dict["dino_mse"] = torch.nn.functional.mse_loss(outputs["dino"], batch["dino_feat"]).nanmean()
-    
+
+            if self.step > 3000:
+                loss_dict["cluster_loss"] = -(outputs["cluster_probs"] * outputs["inner_products"]).sum(1).mean()
+
         if self.training:
             loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
                 outputs["weights_list"], outputs["ray_samples_list"]
@@ -306,6 +343,8 @@ class UMHSModel(NerfactoModel):
             loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
             # Add loss from camera optimizer
             self.camera_optimizer.get_loss_dict(loss_dict)
+        
+
         
         return loss_dict
 
@@ -412,7 +451,6 @@ class UMHSModel(NerfactoModel):
                 # https://arxiv.org/pdf/2111.12077.pdf eq. 18
                 self.step = step
                 train_frac = np.clip(step / N, 0, 1)
-                self.step = step
 
                 def bias(x, b):
                     return b * x / ((b - 1) * x + 1)

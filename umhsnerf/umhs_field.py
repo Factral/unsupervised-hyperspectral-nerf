@@ -14,6 +14,7 @@ from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 from nerfstudio.fields.base_field import get_normalized_directions
 from nerfstudio.field_components.field_heads import FieldHeadNames
 from nerfstudio.field_components.activations import trunc_exp
+from nerfstudio.field_components.encodings import NeRFEncoding, SHEncoding
 
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 import numpy as np
@@ -80,11 +81,12 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
 
+
+
             self.converter = converter
-
             self.temperature = temperature
-
             self.pred_dino = pred_dino
+
             if pred_dino:
                 grid_layers = (12,12)
                 grid_sizes = (19, 19)
@@ -101,14 +103,20 @@ class UMHSField(NerfactoField):
                 tot_out_dims = sum([e.n_output_dims for e in self.encs])
             
                 self.dino_mlp = MLP(
-                    in_dim=self.geo_feat_dim + self.direction_encoding.get_out_dim(),
+                    in_dim=self.geo_feat_dim,# + self.direction_encoding.get_out_dim(),
                     num_layers=2,
                     layer_width=256,
-                    out_dim=128, # dinov2 dim feaup
+                    out_dim=128, # dinov2 dim featup_jbu
                     activation=nn.ReLU(),
                     out_activation=None,
                     implementation=implementation,
                 )
+
+                self.direction_encoding2 = SHEncoding(
+                            levels=4,
+                            implementation=implementation,
+                        )
+                
 
     @staticmethod
     def _get_encoding(start_res, end_res, levels, indim=3, hash_size=19):
@@ -194,21 +202,22 @@ class UMHSField(NerfactoField):
 
             adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
-            print(spec.shape)
 
             outputs["spectral"] = spec.to(directions)
             outputs["abundances"] = abundances.to(directions)
 
             if self.pred_dino:
-                #positions = self.spatial_distortion(positions)
+                #positions = self.spatial_distortion(positions).detach()
                 #positions = (positions + 2.0) / 4.0
                 # First concatenate the list of encodings
-                #xs = torch.cat([e(positions.detach().view(-1, 3)) for e in self.encs], dim=-1)
-                xs = density_embedding.view(-1, self.geo_feat_dim).detach()
-                # Then concatenate with d
-                x = torch.cat([d.detach(), xs], dim=-1)
-                pred = self.dino_mlp(x).view(*outputs_shape, 128).to(directions)
+                #xs = [e(positions.view(-1, 3)) for e in self.encs]
+                #x = torch.concat(xs, dim=-1)
 
+                #d2 = self.direction_encoding2(directions_flat)
+                xs = density_embedding.view(-1, self.geo_feat_dim).detach()
+                #x = torch.cat([d2, xs], dim=-1)
+                pred = self.dino_mlp(xs).view(*outputs_shape, 128).to(directions)
+                
                 outputs["dino"] = pred
 
 
