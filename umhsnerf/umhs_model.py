@@ -240,12 +240,6 @@ class UMHSModel(NerfactoModel):
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
 
         accumulation = self.renderer_accumulation(weights=weights)
-
-
-
-
-
-
         outputs = {
             "accumulation": accumulation,
             "depth": depth,
@@ -257,10 +251,27 @@ class UMHSModel(NerfactoModel):
 
         if "spectral" in self.config.method:
             spectral = self.renderer_spectral(spectral=field_outputs["spectral"], weights=weights)
+            spectral2 = self.renderer_spectral(spectral=field_outputs["spectral2"], weights=weights)
+            #spfeatures = self.renderer_spectral(spectral=field_outputs["spfeatures"], weights=weights)
 
+            #h = torch.cat([spectral, spfeatures, field_outputs["directions"]], dim=-1)
+            #spectral_residual = self.mlp_residual(h).float() 
+            #spectral = spectral + (spectral_residual * accumulation)
+
+            #outputs["specular"] = spectral_residual
+            #outputs["spectral2"] = spectral2
             outputs["spectral"] = spectral
-            for i in range(spectral.shape[-1]):
-                outputs[f"wv_{i}"] = spectral[..., i]
+            outputs["spectral2"] = spectral2
+
+            #for i in range(spectral.shape[-1]):
+            #    outputs[f"wv_{i}"] = spectral[..., i]
+
+
+            with torch.no_grad():
+                specular = self.renderer_spectral(spectral=field_outputs["specular"], weights=weights)
+                outputs["specular"] = specular
+            for i in range(specular.shape[-1]):
+                outputs[f"residual_{i}"] = specular[..., i]
 
             #pseudorgb
             if self.config.method == "spectral":
@@ -306,9 +317,21 @@ class UMHSModel(NerfactoModel):
         image = batch["image"].to(self.device)
         if "spectral" in self.config.method:
             gt_spectral = batch["hs_image"].to(self.device)
+            pred_spectral = outputs["spectral"]
+            pred_rgb = outputs["rgb"]
+            gt_rgb = image
+            if 'spectral2' in outputs:
+                pred_spectral2 = outputs["spectral2"]
 
         #pred_spectral, gt_spectral = self.renderer_spectral.blend_background_for_loss_computation(
         #    pred_image=outputs["spectral"],
+        #    pred_accumulation=outputs["accumulation"],
+        #    gt_image=gt_spectral,
+        #    rgba_image=image
+        #)
+
+        #pred_spectral2, _ = self.renderer_spectral.blend_background_for_loss_computation(
+        #    pred_image=outputs["spectral2"],
         #    pred_accumulation=outputs["accumulation"],
         #    gt_image=gt_spectral,
         #    rgba_image=image
@@ -325,8 +348,11 @@ class UMHSModel(NerfactoModel):
         elif self.config.method == "spectral":
             loss_dict["spectral_loss"] = self.spectral_loss(pred_spectral, gt_spectral)
         elif self.config.method == "rgb+spectral":
-            loss_dict["spectral_loss"] =  self.config.spectral_loss_weight * self.spectral_loss(outputs["spectral"], gt_spectral) 
+            loss_dict["spectral_loss"] =  4 * self.spectral_loss(pred_spectral, gt_spectral) 
+            loss_dict["spectral_loss2"] = 0.1 * self.spectral_loss(pred_spectral2, gt_spectral)
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
+            # l1 penalty
+
 
         if self.config.pred_dino:
             loss_dict["dino_mse"] = torch.nn.functional.mse_loss(outputs["dino"], batch["dino_feat"]).nanmean()

@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --pipeline.model.near_plane 0.05 \
  --pipeline.model.background-color random \
  --pipeline.model.spectral_loss_weight 4.0 \
- --pipeline.model.temperature 1 \
+ --pipeline.model.temperature 0.6 \
  --pipeline.model.pred_dino False \
  --pipeline.datamanager.images-on-gpu True \
  --pipeline.datamanager.patch-size 1 \
@@ -14,5 +14,5 @@ CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --pipeline.model.method rgb+spectral \
  --pipeline.model.implementation tcnn \
  --data data/processed/hotdog/  \
- --experiment-name "hotdog" \
+ --experiment-name "testing" \
  --vis viewer+wandb --viewer.websocket-port 7007 \

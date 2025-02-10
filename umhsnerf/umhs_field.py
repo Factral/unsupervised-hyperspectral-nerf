@@ -1,5 +1,5 @@
 """
-UMHS Field with semantic-guided spectral unmixing.
+UMHS Field spectral unmixing.
 """
 
 from typing import Literal, Optional, Any, Dict, Tuple
@@ -22,7 +22,7 @@ import tinycudann as tcnn
 
 
 class UMHSField(NerfactoField):
-    """UMHS Field with semantic-guided spectral unmixing."""
+    """UMHS Field with spectral unmixing."""
 
     aabb: Tensor
 
@@ -56,7 +56,7 @@ class UMHSField(NerfactoField):
                 in_dim=input_dim,
                 num_layers=3,
                 layer_width=hidden_dim_color,
-                out_dim=num_classes,
+                out_dim=num_classes + 1,
                 activation=nn.ReLU(),
                 out_activation=None, # tanh ?
                 implementation=implementation,
@@ -72,7 +72,7 @@ class UMHSField(NerfactoField):
 
 
             self.mlp_head = MLP(
-                in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+                in_dim=self.position_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
                 num_layers=num_layers_color,
                 layer_width=hidden_dim_color,
                 out_dim=num_classes,
@@ -81,7 +81,15 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
 
-
+            self.mlp_directional = MLP(
+               in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim,
+               num_layers=2,
+               layer_width=16,
+               out_dim=self.wavelengths,
+               activation=nn.ReLU(),
+               out_activation=nn.Sigmoid(),
+               implementation=implementation,
+            )
 
             self.converter = converter
             self.temperature = temperature
@@ -117,22 +125,6 @@ class UMHSField(NerfactoField):
                             implementation=implementation,
                         )
                 
-
-    @staticmethod
-    def _get_encoding(start_res, end_res, levels, indim=3, hash_size=19):
-        growth = np.exp((np.log(end_res) - np.log(start_res)) / (levels - 1))
-        enc = tcnn.Encoding(
-            n_input_dims=indim,
-            encoding_config={
-                "otype": "HashGrid",
-                "n_levels": levels,
-                "n_features_per_level": 8,
-                "log2_hashmap_size": hash_size,
-                "base_resolution": start_res,
-                "per_level_scale": growth,
-            },
-        )
-        return enc
             
     def get_outputs(
         self, ray_samples: RaySamples, density_embedding: Optional[Tensor] = None
@@ -146,6 +138,7 @@ class UMHSField(NerfactoField):
         directions = get_normalized_directions(ray_samples.frustums.directions)
         directions_flat = directions.view(-1, 3)
         d = self.direction_encoding(directions_flat)
+
         outputs_shape = ray_samples.frustums.directions.shape[:-1]
 
         # Get appearance embedding
@@ -166,9 +159,14 @@ class UMHSField(NerfactoField):
         # Spectral prediction using semantic unmixing
         if "spectral" in self.method:
 
+
+            positions =  ray_samples.frustums.get_positions()
+            positions_flat = self.position_encoding(positions.view(-1, 3))
+            positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
+
             h = torch.cat(
                 [
-                    d,
+                    positions_flat.view(-1, self.position_encoding.get_out_dim()),
                     density_embedding.view(-1, self.geo_feat_dim),
                 ]
                 + (
@@ -177,19 +175,17 @@ class UMHSField(NerfactoField):
                 ),
                 dim=-1,
             ) # direction, density features, appeareance embeddings
+
             scalar = self.mlp_head(h).view(*outputs_shape, -1, self.num_classes)
-
-            positions =  ray_samples.frustums.get_positions()
-            positions_flat = self.position_encoding(positions.view(-1, 3))
-            positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
-
             features_input = torch.cat([positions_flat, density_embedding], dim=-1) # positions, density
 
             size = features_input.size()
             features_input = features_input.view(-1, features_input.size(-1))
+            
             features = self.feature_mlp(features_input)
-
             logits = features.view(*size[:-1], -1)
+            logits, s1 = torch.split(logits, [self.num_classes, 1], dim=-1)
+            s1 = F.sigmoid(s1)
 
             abundances = F.softmax(logits / self.temperature, dim=-1)
 
@@ -203,8 +199,24 @@ class UMHSField(NerfactoField):
             adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
 
-            outputs["spectral"] = spec.to(directions)
+            input_spec = torch.cat(
+               [
+                   d,
+                   density_embedding.view(-1, self.geo_feat_dim),
+               ],
+               dim=-1,
+            )
+
+            specular = self.mlp_directional(input_spec).view(*outputs_shape, self.wavelengths) # (B, ray_sample, wavelengths)
+            spec2 = spec +  (s1 * specular)
+
+            outputs["spectral"] = spec2.to(directions)
+            outputs["spectral2"] = spec.to(directions)
             outputs["abundances"] = abundances.to(directions)
+
+            with torch.no_grad():
+                outputs["specular"] = (s1 * specular).to(directions)
+            #outputs["spfeatures"] = spfeatures.to(directions)
 
             if self.pred_dino:
                 #positions = self.spatial_distortion(positions).detach()
