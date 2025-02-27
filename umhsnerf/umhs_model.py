@@ -17,6 +17,9 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+import nerfacc
+
+from nerfstudio.models.instant_ngp  import NGPModel, InstantNGPModelConfig
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
@@ -30,6 +33,8 @@ from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttrib
 from nerfstudio.model_components.scene_colliders import NearFarCollider, AABBBoxCollider
 from nerfstudio.field_components.mlp import MLP, MLPWithHashEncoding
 
+from nerfstudio.fields.nerfacto_field import NerfactoField
+from nerfstudio.model_components.ray_samplers import VolumetricSampler
 
 
 from nerfstudio.model_components.losses import (
@@ -50,93 +55,51 @@ from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.utils.hooks import nan_hook
 from umhsnerf.umhs_renderer import SpectralRenderer, get_weights_spectral
 from umhsnerf.utils.clusterprobe import ClusterLookup
+from nerfstudio.configs.config_utils import to_immutable_dict
 
 
 @dataclass
-class UMHSConfig(NerfactoModelConfig):
+class UMHSConfig(InstantNGPModelConfig):
     """Template Model Configuration.
 
     Add your custom model config parameters here.
     """
 
     _target: Type = field(default_factory=lambda: UMHSModel)
-    near_plane: float = 0.05
-    """How far along the ray to start sampling."""
-    far_plane: float = 1000.0
-    """How far along the ray to stop sampling."""
-    background_color: Literal["random", "last_sample", "black", "white"] = "last_sample"
-    """Whether to randomize the background color."""
-    hidden_dim: int = 64
-    """Dimension of hidden layers"""
-    hidden_dim_color: int = 64
-    """Dimension of hidden layers for color network"""
-    hidden_dim_transient: int = 64
-    """Dimension of hidden layers for transient network"""
-    num_levels: int = 16
-    """Number of levels of the hashmap for the base mlp."""
-    base_res: int = 16
-    """Resolution of the base grid for the hashgrid."""
+    """target class to instantiate"""
+    enable_collider: bool = False
+    """Whether to create a scene collider to filter rays."""
+    collider_params: Optional[Dict[str, float]] = None
+    """Instant NGP doesn't use a collider."""
+    grid_resolution: Union[int, List[int]] = 128
+    """Resolution of the grid used for the field."""
+    grid_levels: int = 4
+    """Levels of the grid used for the field."""
     max_res: int = 2048
     """Maximum resolution of the hashmap for the base mlp."""
     log2_hashmap_size: int = 19
     """Size of the hashmap for the base mlp"""
-    features_per_level: int = 2
-    """How many hashgrid features per level"""
-    num_proposal_samples_per_ray: Tuple[int, ...] = (256, 96)
-    """Number of samples per ray for each proposal network."""
-    num_nerf_samples_per_ray: int = 48
-    """Number of samples per ray for the nerf network."""
-    proposal_update_every: int = 5
-    """Sample every n steps after the warmup"""
-    proposal_warmup: int = 5000
-    """Scales n from 1 to proposal_update_every over this many steps"""
-    num_proposal_iterations: int = 2
-    """Number of proposal network iterations."""
-    use_same_proposal_network: bool = False
-    """Use the same proposal network. Otherwise use different ones."""
-    proposal_net_args_list: List[Dict] = field(
-        default_factory=lambda: [
-            {"hidden_dim": 16, "log2_hashmap_size": 17, "num_levels": 5, "max_res": 128, "use_linear": False},
-            {"hidden_dim": 16, "log2_hashmap_size": 17, "num_levels": 5, "max_res": 256, "use_linear": False},
-        ]
-    )
-    """Arguments for the proposal density fields."""
-    proposal_initial_sampler: Literal["piecewise", "uniform"] = "piecewise"
-    """Initial sampler for the proposal network. Piecewise is preferred for unbounded scenes."""
-    interlevel_loss_mult: float = 1.0
-    """Proposal loss multiplier."""
-    distortion_loss_mult: float = 0.002
-    """Distortion loss multiplier."""
-    orientation_loss_mult: float = 0.0001
-    """Orientation loss multiplier on computed normals."""
-    pred_normal_loss_mult: float = 0.001
-    """Predicted normal loss multiplier."""
-    use_proposal_weight_anneal: bool = True
-    """Whether to use proposal weight annealing."""
-    use_appearance_embedding: bool = True
-    """Whether to use an appearance embedding."""
-    use_average_appearance_embedding: bool = True
-    """Whether to use average appearance embedding or bibe for inference."""
-    proposal_weights_anneal_slope: float = 10.0
-    """Slope of the annealing function for the proposal weights."""
-    proposal_weights_anneal_max_num_iters: int = 1000
-    """Max num iterations for the annealing function."""
-    use_single_jitter: bool = True
-    """Whether use single jitter or not for the proposal networks."""
-    predict_normals: bool = False
-    """Whether to predict normals or not."""
-    disable_scene_contraction: bool = False
-    """Whether to disable scene contraction or not."""
+    alpha_thre: float = 0.01
+    """Threshold for opacity skipping."""
+    cone_angle: float = 0.004
+    """Should be set to 0.0 for blender scenes but 1./256 for real scenes."""
+    render_step_size: Optional[float] = None
+    """Minimum step size for rendering."""
+    near_plane: float = 0.05
+    """How far along ray to start sampling."""
+    far_plane: float = 1e3
+    """How far along ray to stop sampling."""
     use_gradient_scaling: bool = False
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
-    implementation: Literal["tcnn", "torch"] = "torch"
-    """Which implementation to use for the model."""
-    appearance_embed_dim: int = 32
-    """Dimension of the appearance embedding."""
-    average_init_density: float = 1.0
-    """Average initial density output from MLP. """
-    camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
-    """Config of the camera optimizer to use"""
+    use_appearance_embedding: bool = False
+    """Whether to use an appearance embedding."""
+    background_color: Literal["random", "black", "white"] = "random"
+    """
+    The color that is given to masked areas.
+    These areas are used to force the density in those regions to be zero.
+    """
+    disable_scene_contraction: bool = False
+    """Whether to disable scene contraction or not."""
 
     # custom configs
     method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
@@ -151,7 +114,7 @@ class UMHSConfig(NerfactoModelConfig):
     pred_dino: bool = False
 
 
-class UMHSModel(NerfactoModel):
+class UMHSModel(NGPModel):
     """UMHS Model."""
 
     config: UMHSConfig
@@ -164,7 +127,7 @@ class UMHSModel(NerfactoModel):
         else:
             scene_contraction = SceneContraction(order=float("inf"))
 
-        appearance_embedding_dim = self.config.appearance_embed_dim if self.config.use_appearance_embedding else 0
+        appearance_embedding_dim = 0 if self.config.use_appearance_embedding else 32
 
         self.class_colors = {
             0: torch.tensor([0., 0., 0.]),      #  - negro
@@ -179,42 +142,50 @@ class UMHSModel(NerfactoModel):
         if 'spectral' in self.config.method:
             self.renderer_spectral = SpectralRenderer() 
             self.spectral_loss = MSELoss()
+
+        self.step = 0
+        self.kwargs = self.kwargs["metadata"]
         self.converter = ColourSystem(bands=self.kwargs["wavelengths"], cs='sRGB')
         
         self.rgb_loss = MSELoss()
 
-        self.field = UMHSField(  
-                self.scene_box.aabb,
-                hidden_dim=self.config.hidden_dim,
-                num_levels=self.config.num_levels,
-                max_res=self.config.max_res,
-                base_res=self.config.base_res,
-                features_per_level=self.config.features_per_level,
-                log2_hashmap_size=self.config.log2_hashmap_size,
-                hidden_dim_color=self.config.hidden_dim_color,
-                hidden_dim_transient=self.config.hidden_dim_transient,
-                spatial_distortion=scene_contraction,
-                num_images=self.num_train_data,
-                use_pred_normals=self.config.predict_normals,
-                use_average_appearance_embedding=self.config.use_average_appearance_embedding,
-                appearance_embedding_dim=appearance_embedding_dim,
-                average_init_density=self.config.average_init_density,
-                implementation=self.config.implementation,
-                method=self.config.method,
-                wavelengths=len(self.kwargs["wavelengths"]) if 'spectral' in self.config.method else 0,
-                num_classes = self.kwargs["num_classes"],
-                temperature=self.config.temperature,
-                converter = self.converter,
-                pred_dino = self.config.pred_dino,
-                )
+        self.field = UMHSField(
+            aabb=self.scene_box.aabb,
+            appearance_embedding_dim=0 if self.config.use_appearance_embedding else 32,
+            num_images=self.num_train_data,
+            log2_hashmap_size=self.config.log2_hashmap_size,
+            max_res=self.config.max_res,
+            spatial_distortion=scene_contraction,
+            implementation="tcnn",
+            method=self.config.method,
+            wavelengths=len(self.kwargs["wavelengths"]) if 'spectral' in self.config.method else 0,
+            num_classes = self.kwargs["num_classes"],
+            temperature=self.config.temperature,
+            converter = self.converter,
+            pred_dino = self.config.pred_dino,
+        )
 
-        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        #   Reinitialize the occupancy grid and sampler using the new field.
+        self.scene_aabb = torch.nn.Parameter(self.scene_box.aabb.flatten(), requires_grad=True)
+        if self.config.render_step_size is None:
+            self.config.render_step_size = (((self.scene_aabb[3:] - self.scene_aabb[:3]) ** 2).sum().sqrt().item() / 1000)
+        self.occupancy_grid = nerfacc.OccGridEstimator(
+            roi_aabb=self.scene_aabb,
+            resolution=self.config.grid_resolution,
+            levels=self.config.grid_levels,
+        )
+        self.sampler = VolumetricSampler(
+            occupancy_grid=self.occupancy_grid,
+            density_fn=self.field.density_fn,
+        )
+
+
+        #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
         #self.collider = AABBBoxCollider(self.scene_box)
 
         #self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         #self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         self.cluster_probe = ClusterLookup(128, self.kwargs["num_classes"])
-
 
 
     def label_to_rgb(self, labels):
@@ -224,22 +195,42 @@ class UMHSModel(NerfactoModel):
 
 
     def get_outputs(self, ray_bundle: RayBundle):
-        if self.training:
-            self.camera_optimizer.apply_to_raybundle(ray_bundle)
-        
-        ray_samples: RaySamples
-        
-        ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-        field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
-        
-        weights = get_weights_spectral(ray_samples.deltas, field_outputs[FieldHeadNames.DENSITY])
-        weights_list.append(weights)
-        ray_samples_list.append(ray_samples)
+        assert self.field is not None
+        num_rays = len(ray_bundle)
 
         with torch.no_grad():
-            depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+            ray_samples, ray_indices = self.sampler(
+                ray_bundle=ray_bundle,
+                near_plane=self.config.near_plane,
+                far_plane=self.config.far_plane,
+                render_step_size=self.config.render_step_size,
+                alpha_thre=self.config.alpha_thre,
+                cone_angle=self.config.cone_angle,
+            )
 
-        accumulation = self.renderer_accumulation(weights=weights)
+        field_outputs = self.field(ray_samples)
+
+        if self.config.use_gradient_scaling:
+            field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
+
+        
+        # accumulation
+        packed_info = nerfacc.pack_info(ray_indices, num_rays)
+        weights = nerfacc.render_weight_from_density(
+            t_starts=ray_samples.frustums.starts[..., 0],
+            t_ends=ray_samples.frustums.ends[..., 0],
+            sigmas=field_outputs[FieldHeadNames.DENSITY][..., 0],
+            packed_info=packed_info,
+        )[0]
+        weights = weights[..., None]
+
+        
+        depth = self.renderer_depth(
+            weights=weights, ray_samples=ray_samples, ray_indices=ray_indices, num_rays=num_rays
+        )
+
+        accumulation = self.renderer_accumulation(weights=weights, ray_indices=ray_indices, num_rays=num_rays)
+
         outputs = {
             "accumulation": accumulation,
             "depth": depth,
@@ -250,28 +241,25 @@ class UMHSModel(NerfactoModel):
             outputs["rgb"] = rgb
 
         if "spectral" in self.config.method:
-            spectral = self.renderer_spectral(spectral=field_outputs["spectral"], weights=weights)
-            spectral2 = self.renderer_spectral(spectral=field_outputs["spectral2"], weights=weights)
+            spectral = self.renderer_spectral(spectral=field_outputs["spectral"], weights=weights , ray_indices=ray_indices,
+            num_rays=num_rays)
+            spectral2 = self.renderer_spectral(spectral=field_outputs["spectral2"], weights=weights , ray_indices=ray_indices,
+            num_rays=num_rays)
             #spfeatures = self.renderer_spectral(spectral=field_outputs["spfeatures"], weights=weights)
 
-            #h = torch.cat([spectral, spfeatures, field_outputs["directions"]], dim=-1)
-            #spectral_residual = self.mlp_residual(h).float() 
-            #spectral = spectral + (spectral_residual * accumulation)
-
             #outputs["specular"] = spectral_residual
-            #outputs["spectral2"] = spectral2
             outputs["spectral"] = spectral
             outputs["spectral2"] = spectral2
 
-            #for i in range(spectral.shape[-1]):
-            #    outputs[f"wv_{i}"] = spectral[..., i]
+            for i in range(spectral.shape[-1]):
+                outputs[f"wv_{i}"] = spectral[..., i]
 
-
-            with torch.no_grad():
-                specular = self.renderer_spectral(spectral=field_outputs["specular"], weights=weights)
-                outputs["specular"] = specular
-            for i in range(specular.shape[-1]):
-                outputs[f"residual_{i}"] = specular[..., i]
+            #with torch.no_grad():
+            #    specular = self.renderer_spectral(spectral=field_outputs["specular"], weights=weights, ray_indices=ray_indices,
+            #num_rays=num_rays)
+            #    outputs["specular"] = specular
+            #for i in range(specular.shape[-1]):
+            #    outputs[f"residual_{i}"] = specular[..., i]
 
             #pseudorgb
             if self.config.method == "spectral":
@@ -280,11 +268,14 @@ class UMHSModel(NerfactoModel):
             else:
                 outputs["rgb"] = self.converter(spectral)
 
+            outputs["num_samples_per_ray"] = packed_info[:, 1]
+
             #render abundances
             with torch.no_grad():
-                abundaces = self.renderer_spectral(spectral=field_outputs["abundances"], weights=weights)
+                abundaces = self.renderer_spectral(spectral=field_outputs["abundances"], weights=weights, ray_indices=ray_indices,
+            num_rays=num_rays)
                 outputs["abundances"] = abundaces
-                outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
+                #outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
                 for i in range(field_outputs["abundances"].shape[-1]):
                     outputs[f"abundances_{i}"] = abundaces[:,i]
 
@@ -300,13 +291,6 @@ class UMHSModel(NerfactoModel):
                 cluster_probs = self.label_to_rgb(cluster_probs.argmax(1))
                 outputs["cluster_probs_seg"] = cluster_probs
                 outputs["inner_products"] = inner_products
-
-        if self.training:
-            outputs["weights_list"] = weights_list
-            outputs["ray_samples_list"] = ray_samples_list
-
-        for i in range(self.config.num_proposal_iterations):
-            outputs[f"prop_depth_{i}"] = self.renderer_depth(weights=weights_list[i], ray_samples=ray_samples_list[i])
 
         return outputs
 
@@ -330,13 +314,6 @@ class UMHSModel(NerfactoModel):
         #    rgba_image=image
         #)
 
-        #pred_spectral2, _ = self.renderer_spectral.blend_background_for_loss_computation(
-        #    pred_image=outputs["spectral2"],
-        #    pred_accumulation=outputs["accumulation"],
-        #    gt_image=gt_spectral,
-        #    rgba_image=image
-        #)
-
         pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["rgb"],
             pred_accumulation=outputs["accumulation"],
@@ -349,9 +326,8 @@ class UMHSModel(NerfactoModel):
             loss_dict["spectral_loss"] = self.spectral_loss(pred_spectral, gt_spectral)
         elif self.config.method == "rgb+spectral":
             loss_dict["spectral_loss"] =  4 * self.spectral_loss(pred_spectral, gt_spectral) 
-            loss_dict["spectral_loss2"] = 0.1 * self.spectral_loss(pred_spectral2, gt_spectral)
+            loss_dict["spectral_loss2"] = 1 * self.spectral_loss(pred_spectral2, gt_spectral)
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
-            # l1 penalty
 
 
         if self.config.pred_dino:
@@ -360,17 +336,6 @@ class UMHSModel(NerfactoModel):
 
             if self.step > 3000:
                 loss_dict["cluster_loss"] = -(outputs["cluster_probs"] * outputs["inner_products"]).sum(1).mean()
-
-        if self.training:
-            loss_dict["interlevel_loss"] = self.config.interlevel_loss_mult * interlevel_loss(
-                outputs["weights_list"], outputs["ray_samples_list"]
-            )
-            assert metrics_dict is not None and "distortion" in metrics_dict
-            loss_dict["distortion_loss"] = self.config.distortion_loss_mult * metrics_dict["distortion"]
-            # Add loss from camera optimizer
-            self.camera_optimizer.get_loss_dict(loss_dict)
-        
-
         
         return loss_dict
 
@@ -387,10 +352,8 @@ class UMHSModel(NerfactoModel):
             gt_spectral = batch["hs_image"].to(self.device)
             metrics_dict["psnr_spectral"] = self.psnr(outputs["spectral"], gt_spectral)
 
-        if self.training:
-            metrics_dict["distortion"] = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+        metrics_dict["num_samples_per_batch"] = outputs["num_samples_per_ray"].sum()
 
-        self.camera_optimizer.get_metrics_dict(metrics_dict)
         return metrics_dict
 
 
@@ -440,13 +403,6 @@ class UMHSModel(NerfactoModel):
 
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
-        for i in range(self.config.num_proposal_iterations):
-            key = f"prop_depth_{i}"
-            prop_depth_i = colormaps.apply_depth_colormap(
-                outputs[key],
-                accumulation=outputs["accumulation"],
-            )
-            images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict
 
@@ -464,14 +420,19 @@ class UMHSModel(NerfactoModel):
                 camera.generate_rays(camera_indices=0, keep_shape=True, obb_box=obb_box)
             )
 
-
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
         callbacks = []
-        if self.config.use_proposal_weight_anneal:
+        if True:
             # anneal the weights of the proposal network before doing PDF sampling
-            N = self.config.proposal_weights_anneal_max_num_iters
+
+            def update_occupancy_grid(step: int):
+                self.step = step
+                self.occupancy_grid.update_every_n_steps(
+                    step=step,
+                    occ_eval_fn=lambda x: self.field.density_fn(x) * self.config.render_step_size,
+                )
 
             def set_anneal(step):
                 # https://arxiv.org/pdf/2111.12077.pdf eq. 18
@@ -482,22 +443,8 @@ class UMHSModel(NerfactoModel):
                     return b * x / ((b - 1) * x + 1)
 
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
-                self.proposal_sampler.set_anneal(anneal)
+                #self.proposal_sampler.set_anneal(anneal)
 
-            callbacks.append(
-                TrainingCallback(
-                    where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
-                    update_every_num_iters=1,
-                    func=set_anneal,
-                )
-            )
-            callbacks.append(
-                TrainingCallback(
-                    where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
-                    update_every_num_iters=1,
-                    func=self.proposal_sampler.step_cb,
-                )
-            )
 
             if self.config.method != "rgb":
                 def clamp_endmembers(step):
@@ -523,4 +470,45 @@ class UMHSModel(NerfactoModel):
                     )
                 )
 
+                callbacks.append(
+
+            TrainingCallback(
+                where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
+                update_every_num_iters=1,
+                func=update_occupancy_grid,
+            )
+                )
+
         return callbacks
+
+
+
+    @torch.no_grad()
+    def get_outputs_for_camera_ray_bundle(self, camera_ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+        """Takes in camera parameters and computes the output of the model.
+
+        Args:
+            camera_ray_bundle: ray bundle to calculate outputs over
+        """
+        input_device = camera_ray_bundle.directions.device
+        num_rays_per_chunk = self.config.eval_num_rays_per_chunk
+        image_height, image_width = camera_ray_bundle.origins.shape[:2]
+        num_rays = len(camera_ray_bundle)
+        outputs_lists = defaultdict(list)
+        for i in range(0, num_rays, num_rays_per_chunk):
+            start_idx = i
+            end_idx = i + num_rays_per_chunk
+            ray_bundle = camera_ray_bundle.get_row_major_sliced_ray_bundle(start_idx, end_idx)
+            # move the chunk inputs to the model device
+            ray_bundle = ray_bundle.to(self.device)
+            outputs = self.forward(ray_bundle=ray_bundle)
+            for output_name, output in outputs.items():  # type: ignore
+                if not isinstance(output, torch.Tensor):
+                    # TODO: handle lists of tensors as well
+                    continue
+                # move the chunk outputs from the model device back to the device of the inputs.
+                outputs_lists[output_name].append(output.to(input_device))
+        outputs = {}
+        for output_name, outputs_list in outputs_lists.items():
+            outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)  # type: ignore
+        return outputs

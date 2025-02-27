@@ -21,6 +21,9 @@ import numpy as np
 import tinycudann as tcnn
 
 
+from nerfstudio.data.scene_box import SceneBox
+
+
 class UMHSField(NerfactoField):
     """UMHS Field with spectral unmixing."""
 
@@ -42,6 +45,8 @@ class UMHSField(NerfactoField):
         pred_dino: bool = False,
         **kwargs,
     ) -> None:
+        print(kwargs["appearance_embedding_dim"])
+
         super().__init__(aabb=aabb, num_images=num_images,implementation=implementation, **kwargs)
 
         self.method = method
@@ -64,11 +69,14 @@ class UMHSField(NerfactoField):
 
             if self.training:
                 endmembers = np.load("vca.npy")
-                self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32), requires_grad=True)
+                endmembers = torch.tensor(endmembers, dtype=torch.float32, requires_grad=True)
                 #self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
             else:
                 # will be loaded from the checkpoint
-                self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
+                endmembers = torch.randn(self.num_classes, self.wavelengths)
+        
+            # register buffer
+            self.register_buffer("endmembers", endmembers)
 
 
             self.mlp_head = MLP(
@@ -82,7 +90,7 @@ class UMHSField(NerfactoField):
             )
 
             self.mlp_directional = MLP(
-               in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim,
+               in_dim=self.direction_encoding.get_out_dim() + self.position_encoding.get_out_dim(),#self.geo_feat_dim,
                num_layers=2,
                layer_width=16,
                out_dim=self.wavelengths,
@@ -156,13 +164,24 @@ class UMHSField(NerfactoField):
                         (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
                     )
 
+
         # Spectral prediction using semantic unmixing
         if "spectral" in self.method:
 
 
             positions =  ray_samples.frustums.get_positions()
             positions_flat = self.position_encoding(positions.view(-1, 3))
-            positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
+
+
+            if len(positions_flat.shape) == 2:
+                positions_flat = positions_flat.unsqueeze(0)
+            else:
+                positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
+
+
+            if len(density_embedding.shape) == 2:
+                density_embedding = density_embedding.unsqueeze(0)
+
 
             h = torch.cat(
                 [
@@ -202,7 +221,7 @@ class UMHSField(NerfactoField):
             input_spec = torch.cat(
                [
                    d,
-                   density_embedding.view(-1, self.geo_feat_dim),
+                   positions_flat.view(-1, self.position_encoding.get_out_dim()),
                ],
                dim=-1,
             )
@@ -214,8 +233,8 @@ class UMHSField(NerfactoField):
             outputs["spectral2"] = spec.to(directions)
             outputs["abundances"] = abundances.to(directions)
 
-            with torch.no_grad():
-                outputs["specular"] = (s1 * specular).to(directions)
+            #with torch.no_grad():
+            #    outputs["specular"] = (s1 * specular).to(directions)
             #outputs["spfeatures"] = spfeatures.to(directions)
 
             if self.pred_dino:
@@ -251,3 +270,35 @@ class UMHSField(NerfactoField):
 
         return outputs
 
+
+
+    def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
+        """Computes and returns the densities."""
+        if self.spatial_distortion is not None:
+            positions = ray_samples.frustums.get_positions()
+            positions = self.spatial_distortion(positions)
+            positions = (positions + 2.0) / 4.0
+        else:
+            positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+        # Make sure the tcnn gets inputs between 0 and 1.
+        selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
+        positions = positions * selector[..., None]
+
+        assert positions.numel() > 0, "positions is empty."
+
+        self._sample_locations = positions
+        if not self._sample_locations.requires_grad:
+            self._sample_locations.requires_grad = True
+        positions_flat = positions.view(-1, 3)
+
+        assert positions_flat.numel() > 0, "positions_flat is empty."
+        h = self.mlp_base(positions_flat).view(*ray_samples.frustums.shape, -1)
+        density_before_activation, base_mlp_out = torch.split(h, [1, self.geo_feat_dim], dim=-1)
+        self._density_before_activation = density_before_activation
+
+        # Rectifying the density with an exponential is much more stable than a ReLU or
+        # softplus, because it enables high post-activation (float32) density outputs
+        # from smaller internal (float16) parameters.
+        density = self.average_init_density * trunc_exp(density_before_activation.to(positions))
+        density = density * selector[..., None]
+        return density, base_mlp_out

@@ -46,25 +46,16 @@ umhs_method = MethodSpecification(
                 eval_num_rays_per_batch=9216,
             ),
             model=UMHSConfig(
-                eval_num_rays_per_chunk=1 << 15,
-                average_init_density=0.01
+                eval_num_rays_per_chunk=8192,
             ),
         ),
         optimizers={
-            "proposal_networks": {
-                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
-            },
             "fields": {
                 "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
             },
-            "camera_opt": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=5000),
-            },
         }, 
-        viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+        viewer=ViewerConfig(num_rays_per_chunk=1 << 12),
         vis="viewer",
     ),
     description="umhs method",

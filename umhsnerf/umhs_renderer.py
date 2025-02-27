@@ -5,7 +5,7 @@ from jaxtyping import Float, Int
 from torch import Tensor
 from nerfstudio.model_components.renderers import SemanticRenderer
 from nerfstudio.utils import colors
-
+import nerfacc
 
 class SpectralRenderer(SemanticRenderer):
     """Calculate spectral along the ray."""
@@ -15,10 +15,22 @@ class SpectralRenderer(SemanticRenderer):
     def forward(
         cls,
         spectral: Float[Tensor, "*bs num_samples num_classes"],
-        weights: Float[Tensor, "*bs num_samples 1"]
+        weights: Float[Tensor, "*bs num_samples 1"],
+        ray_indices: Optional[Int[Tensor, "num_samples"]] = None,
+        num_rays: Optional[int] = None,
     ) -> Float[Tensor, "*bs num_classes"]:
         """Calculate spectral along the ray."""
-        return torch.sum(weights * spectral, dim=-2)
+        if spectral.dim() == 3:
+            spectral = spectral.squeeze(0)
+        elif spectral.dim() == 1:
+            spectral = spectral.unsqueeze(0)
+
+        return nerfacc.accumulate_along_rays(
+                weights[..., 0], values=spectral, ray_indices=ray_indices, n_rays=num_rays
+            )
+
+#torch.Size([2465439, 1])  weights
+#torch.Size([1, 2465439, 21])  values     
 
     @classmethod
     def get_background_color(

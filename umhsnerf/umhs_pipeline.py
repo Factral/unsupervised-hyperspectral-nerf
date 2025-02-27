@@ -21,6 +21,7 @@ from nerfstudio.pipelines.base_pipeline import (
     VanillaPipeline,
     VanillaPipelineConfig,
 )
+from nerfstudio.pipelines.dynamic_batch import DynamicBatchPipelineConfig, DynamicBatchPipeline
 from nerfstudio.utils import profiler
 
 from umhsnerf.data.umhs_datamanager import UMHSDataManagerConfig
@@ -30,7 +31,7 @@ import torch
 
 
 @dataclass
-class UMHSPipelineConfig(VanillaPipelineConfig):
+class UMHSPipelineConfig(DynamicBatchPipelineConfig):
     """Configuration for pipeline instantiation"""
 
     _target: Type = field(default_factory=lambda: UMHSPipeline)
@@ -41,14 +42,21 @@ class UMHSPipelineConfig(VanillaPipelineConfig):
     """specifies the model config"""
     check_nan: bool = False
     num_classes: int = 5
+    
+    target_num_samples: int = 262144  # 1 << 18
+    """The target number of samples to use for an entire batch of rays."""
+    max_num_samples_per_ray: int = 1024  # 1 << 10
+    """The maximum number of samples to be placed along a ray."""
 
 # based on: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/pipelines/base_pipeline.py#L212
-class UMHSPipeline(VanillaPipeline):
+class UMHSPipeline(DynamicBatchPipeline):
     """UMHS Pipeline
 
     Args:
         config: the pipeline config used to instantiate class
     """
+    dynamic_num_rays_per_batch: int
+
 
     def __init__(
         self,
@@ -59,7 +67,11 @@ class UMHSPipeline(VanillaPipeline):
         local_rank: int = 0,
         grad_scaler: Optional[GradScaler] = None,
     ):
-        super(VanillaPipeline, self).__init__()
+        super(DynamicBatchPipeline, self).__init__(config, device, test_mode, world_size, local_rank)
+
+        self.dynamic_num_rays_per_batch = self.config.target_num_samples // self.config.max_num_samples_per_ray
+        self._update_pixel_samplers()
+
         if config.check_nan:
             torch.autograd.set_detect_anomaly(True)
 
@@ -91,8 +103,9 @@ class UMHSPipeline(VanillaPipeline):
         if world_size > 1:
             self._model = typing.cast(OpenNerfModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
-            
 
+        # random permutate endmembers in model with torch
+        self.model.field.endmembers
 
 
     @profiler.time_function
@@ -131,3 +144,20 @@ class UMHSPipeline(VanillaPipeline):
             metrics_dict["num_rays"] = (camera.height * camera.width * camera.size).item()
             self.train()
         return metrics_dict, images_dict
+
+
+    def load_pipeline(self, loaded_state: Dict[str, Any], step: int) -> None:
+        """Load the checkpoint from the given path
+
+        Args:
+            loaded_state: pre-trained model state dict
+            step: training step of the loaded checkpoint
+        """
+        state = {
+            (key[len("module.") :] if key.startswith("module.") else key): value for key, value in loaded_state.items()
+        }
+        self.model.update_to_step(step)
+        self.load_state_dict(state)
+        # perm endmembers, is a matrix of n_classes x bands
+        perm_idx = torch.randperm(self.model.field.endmembers.shape[0])
+        self.model.field.endmembers = self.model.field.endmembers[perm_idx]

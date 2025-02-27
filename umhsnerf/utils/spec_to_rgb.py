@@ -62,6 +62,14 @@ class ColourSystem(nn.Module):
     def __init__(self, bands, cs='sRGB', device='cuda'):
         super().__init__()
 
+        rgb_wavelengths = [620, 555, 503]
+
+        nearest = np.array(bands).reshape(-1, 1) - np.array(rgb_wavelengths).reshape(1, -1)
+        self.nearest = torch.from_numpy(np.argmin(np.abs(nearest), axis=0)).to(device)
+
+        white = np.array([176.90352, 94.22424, 101.18808]) / 255.0
+        self.white = torch.from_numpy(white).to(device).float()
+
         bands = np.array(bands) * 10
         cmf = np.array([component_x(bands), component_y(bands), component_z(bands)])
 
@@ -80,6 +88,15 @@ class ColourSystem(nn.Module):
             'transform_matrix',
             torch.from_numpy(RGB).float()
         )
+    
+        #white = np.array([156.90352, 104.22424, 101.18808]) / 255.0
+        #white = torch.from_numpy(white).float()
+
+        #self.register_buffer(
+        #    'transform_matrix',
+        # torch.from_numpy(RGB).float() * white
+        #)
+
 
         #self.transform_matrix_learnable = nn.Parameter(torch.rand_like(self.transform_matrix), requires_grad=True)
 
@@ -98,6 +115,12 @@ class ColourSystem(nn.Module):
         rgb = torch.matmul(spec, self.transform_matrix)
 
         rgb = self.gamma_correction(rgb)
+        #rgb = spec[:,self.nearest] / self.white
+        #rgb = torch.pow(rgb, 1/1.7)
+
+        #rgb = rgb / 1.8
+
+        #rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
 
         rgb = rgb.clamp(0, 1)
 
