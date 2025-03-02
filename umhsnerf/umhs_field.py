@@ -43,6 +43,8 @@ class UMHSField(NerfactoField):
         temperature: float = 0.5,
         converter: ColourSystem = None,
         pred_dino: bool = False,
+        pred_specular: bool = False,
+        load_vca: bool = False,
         **kwargs,
     ) -> None:
         print(kwargs["appearance_embedding_dim"])
@@ -53,34 +55,40 @@ class UMHSField(NerfactoField):
         self.num_classes = num_classes
         self.wavelengths = wavelengths
         self.feature_dim = feature_dim
+        self.pred_specular = pred_specular
+        self.average_init_density = 1
 
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
             input_dim = self.position_encoding.get_out_dim() + self.geo_feat_dim
+            out_dim_feature = self.num_classes + 1 if self.pred_specular else self.num_classes
             self.feature_mlp = MLP(
                 in_dim=input_dim,
                 num_layers=3,
                 layer_width=hidden_dim_color,
-                out_dim=num_classes + 1,
+                out_dim=out_dim_feature,
                 activation=nn.ReLU(),
                 out_activation=None, # tanh ?
                 implementation=implementation,
             )
 
             if self.training:
-                endmembers = np.load("vca.npy")
-                endmembers = torch.tensor(endmembers, dtype=torch.float32, requires_grad=True)
-                #self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
+                if load_vca:
+                    endmembers = np.load("vca.npy")
+                    self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32, requires_grad=True))
+                else:
+                    self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
             else:
                 # will be loaded from the checkpoint
                 endmembers = torch.randn(self.num_classes, self.wavelengths)
         
             # register buffer
-            self.register_buffer("endmembers", endmembers)
+            #self.register_buffer("endmembers", endmembers)
 
-
+            #self.direction_encoding.get_out_dim()
+            #self.position_encoding.get_out_dim()
             self.mlp_head = MLP(
-                in_dim=self.position_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+                in_dim=self.position_encoding.get_out_dim()+ self.geo_feat_dim + self.appearance_embedding_dim,
                 num_layers=num_layers_color,
                 layer_width=hidden_dim_color,
                 out_dim=num_classes,
@@ -185,6 +193,7 @@ class UMHSField(NerfactoField):
 
             h = torch.cat(
                 [
+                    #d,
                     positions_flat.view(-1, self.position_encoding.get_out_dim()),
                     density_embedding.view(-1, self.geo_feat_dim),
                 ]
@@ -203,8 +212,10 @@ class UMHSField(NerfactoField):
             
             features = self.feature_mlp(features_input)
             logits = features.view(*size[:-1], -1)
-            logits, s1 = torch.split(logits, [self.num_classes, 1], dim=-1)
-            s1 = F.sigmoid(s1)
+
+            if self.pred_specular:
+                logits, s1 = torch.split(logits, [self.num_classes, 1], dim=-1)
+                s1 = F.sigmoid(s1)
 
             abundances = F.softmax(logits / self.temperature, dim=-1)
 
@@ -218,23 +229,30 @@ class UMHSField(NerfactoField):
             adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
 
-            input_spec = torch.cat(
-               [
-                   d,
-                   positions_flat.view(-1, self.position_encoding.get_out_dim()),
-               ],
-               dim=-1,
-            )
 
-            specular = self.mlp_directional(input_spec).view(*outputs_shape, self.wavelengths) # (B, ray_sample, wavelengths)
-            spec2 = spec +  (s1 * specular)
+            if self.pred_specular:
 
-            outputs["spectral"] = spec2.to(directions)
-            outputs["spectral2"] = spec.to(directions)
+                input_spec = torch.cat(
+                [
+                    d,
+                    positions_flat.view(-1, self.position_encoding.get_out_dim()),
+                ],
+                dim=-1,
+                )
+
+                specular = self.mlp_directional(input_spec).view(*outputs_shape, self.wavelengths) # (B, ray_sample, wavelengths)
+                spec2 = spec +  (s1 * specular)
+
+            if self.pred_specular:
+                outputs["spectral"] = spec2.to(directions)
+                outputs["spectral2"] = spec.to(directions)
+                with torch.no_grad():
+                    outputs["specular"] = (s1 * specular).to(directions)
+            else:
+                outputs["spectral"] = spec.to(directions)
+
             outputs["abundances"] = abundances.to(directions)
 
-            #with torch.no_grad():
-            #    outputs["specular"] = (s1 * specular).to(directions)
             #outputs["spfeatures"] = spfeatures.to(directions)
 
             if self.pred_dino:

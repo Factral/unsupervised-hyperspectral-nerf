@@ -8,9 +8,8 @@ CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=3 ns-train instant-ngp-bounded \
   --pipeline.datamanager.patch-size 1 \
   --pipeline.datamanager.train-num-rays-per-batch 8192 \
   --max-num-iterations 100000 \
+  --data data/processed/cbox_sphere \
   --vis viewer+wandb \
   --viewer.websocket-port 7007 \
-  colmap \
-  --data ./data/hsnerf/basil_hs/
 
 #/home/perezpnf/miniconda3/envs/umhs/lib/python3.8/site-packages/nerfstudio/
