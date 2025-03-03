@@ -96,7 +96,7 @@ class UMHSConfig(InstantNGPModelConfig):
     The color that is given to masked areas.
     These areas are used to force the density in those regions to be zero.
     """
-    disable_scene_contraction: bool = False
+    disable_scene_contraction: bool = True
     """Whether to disable scene contraction or not."""
 
     # custom configs
@@ -165,10 +165,10 @@ class UMHSModel(NGPModel):
             pred_dino=self.config.pred_dino,
             pred_specular=self.config.pred_specular,
             load_vca=self.config.load_vca
-        )
+        ) 
 
         # Reinitialize the occupancy grid and sampler using the new field.
-        self.scene_aabb = torch.nn.Parameter(self.scene_box.aabb.flatten(), requires_grad=False)
+        self.scene_aabb = torch.nn.Parameter(self.scene_box.aabb.flatten(), requires_grad=True)
         if self.config.render_step_size is None:
             self.config.render_step_size = (((self.scene_aabb[3:] - self.scene_aabb[:3]) ** 2).sum().sqrt().item() / 1000)
         self.occupancy_grid = nerfacc.OccGridEstimator(
@@ -183,7 +183,7 @@ class UMHSModel(NGPModel):
 
 
         #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        #self.collider = AABBBoxCollider(self.scene_box)
+        self.collider = AABBBoxCollider(self.scene_box)
 
         # self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         # self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
@@ -307,11 +307,11 @@ class UMHSModel(NGPModel):
         #    rgba_image=image
         #)
 
-        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["rgb"],
-            pred_accumulation=outputs["accumulation"],
-            gt_image=image
-        )
+        #pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
+        #    pred_image=outputs["rgb"],
+        #    pred_accumulation=outputs["accumulation"],
+        #    gt_image=image
+        #)
 
 
 
