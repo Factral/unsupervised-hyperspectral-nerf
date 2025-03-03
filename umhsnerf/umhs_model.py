@@ -125,11 +125,11 @@ class UMHSConfig(NerfactoModelConfig):
     """Whether use single jitter or not for the proposal networks."""
     predict_normals: bool = False
     """Whether to predict normals or not."""
-    disable_scene_contraction: bool = False
+    disable_scene_contraction: bool = True
     """Whether to disable scene contraction or not."""
-    use_gradient_scaling: bool = False
+    use_gradient_scaling: bool = True
     """Use gradient scaler where the gradients are lower for points closer to the camera."""
-    implementation: Literal["tcnn", "torch"] = "torch"
+    implementation: Literal["tcnn", "torch"] = "tcnn"
     """Which implementation to use for the model."""
     appearance_embed_dim: int = 32
     """Dimension of the appearance embedding."""
@@ -149,6 +149,7 @@ class UMHSConfig(NerfactoModelConfig):
     temperature: float = 0.2
 
     pred_dino: bool = False
+    pred_specular: bool = False
 
 
 class UMHSModel(NerfactoModel):
@@ -206,10 +207,11 @@ class UMHSModel(NerfactoModel):
                 temperature=self.config.temperature,
                 converter = self.converter,
                 pred_dino = self.config.pred_dino,
+                pred_specular= self.config.pred_specular
                 )
 
-        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        #self.collider = AABBBoxCollider(self.scene_box)
+        #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        self.collider = AABBBoxCollider(self.scene_box)
 
         #self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         #self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
@@ -251,7 +253,17 @@ class UMHSModel(NerfactoModel):
 
         if "spectral" in self.config.method:
             spectral = self.renderer_spectral(spectral=field_outputs["spectral"], weights=weights)
-            spectral2 = self.renderer_spectral(spectral=field_outputs["spectral2"], weights=weights)
+            if self.config.pred_specular:
+                spectral2 = self.renderer_spectral(spectral=field_outputs["spectral2"], weights=weights)
+                outputs["spectral2"] = spectral2
+
+
+                with torch.no_grad():
+                    specular = self.renderer_spectral(spectral=field_outputs["specular"], weights=weights)
+                    outputs["specular"] = specular
+                for i in range(specular.shape[-1]):
+                    outputs[f"residual_{i}"] = specular[..., i]
+
             #spfeatures = self.renderer_spectral(spectral=field_outputs["spfeatures"], weights=weights)
 
             #h = torch.cat([spectral, spfeatures, field_outputs["directions"]], dim=-1)
@@ -261,17 +273,9 @@ class UMHSModel(NerfactoModel):
             #outputs["specular"] = spectral_residual
             #outputs["spectral2"] = spectral2
             outputs["spectral"] = spectral
-            outputs["spectral2"] = spectral2
 
-            #for i in range(spectral.shape[-1]):
-            #    outputs[f"wv_{i}"] = spectral[..., i]
-
-
-            with torch.no_grad():
-                specular = self.renderer_spectral(spectral=field_outputs["specular"], weights=weights)
-                outputs["specular"] = specular
-            for i in range(specular.shape[-1]):
-                outputs[f"residual_{i}"] = specular[..., i]
+            for i in range(spectral.shape[-1]):
+                outputs[f"wv_{i}"] = spectral[..., i]
 
             #pseudorgb
             if self.config.method == "spectral":
@@ -284,9 +288,12 @@ class UMHSModel(NerfactoModel):
             with torch.no_grad():
                 abundaces = self.renderer_spectral(spectral=field_outputs["abundances"], weights=weights)
                 outputs["abundances"] = abundaces
-                outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
+                #outputs["abundaces_seg"] = self.label_to_rgb(torch.argmax(abundaces, dim=-1))
                 for i in range(field_outputs["abundances"].shape[-1]):
                     outputs[f"abundances_{i}"] = abundaces[:,i]
+                
+                #for i in range(field_outputs["abundances"].shape[-1]):
+                #    outputs[f"abundances2_{i}"] = torch.where(abundaces[:,i] < 0.2, torch.tensor(0.0).to(abundaces.device), abundaces[:,i])
 
             if self.config.pred_dino:
                 dino = self.renderer_spectral(spectral=field_outputs["dino"], weights=weights.detach())
@@ -349,8 +356,9 @@ class UMHSModel(NerfactoModel):
             loss_dict["spectral_loss"] = self.spectral_loss(pred_spectral, gt_spectral)
         elif self.config.method == "rgb+spectral":
             loss_dict["spectral_loss"] =  4 * self.spectral_loss(pred_spectral, gt_spectral) 
-            loss_dict["spectral_loss2"] = 0.1 * self.spectral_loss(pred_spectral2, gt_spectral)
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
+            if self.config.pred_specular:
+                loss_dict["spectral_loss2"] = 0.4 * self.spectral_loss(pred_spectral2, gt_spectral)
             # l1 penalty
 
 

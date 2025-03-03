@@ -1,18 +1,19 @@
-CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
+CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
  --pipeline.num_classes 7 \
  --pipeline.model.far-plane 1000 \
  --pipeline.model.near_plane 0.05 \
- --pipeline.model.background-color random \
+ --pipeline.model.background-color black \
  --pipeline.model.spectral_loss_weight 4.0 \
  --pipeline.model.temperature 0.6 \
+ --pipeline.model.pred_specular False \
  --pipeline.model.pred_dino False \
  --pipeline.datamanager.images-on-gpu True \
  --pipeline.datamanager.patch-size 1 \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method rgb+spectral \
  --pipeline.model.implementation tcnn \
- --data data/processed/hotdog/  \
- --experiment-name "testing" \
+ --data data/hsnerf/surface_optics/tools/masked_processed_dataset \
+ --experiment-name "tools" \
  --vis viewer+wandb --viewer.websocket-port 7007 \

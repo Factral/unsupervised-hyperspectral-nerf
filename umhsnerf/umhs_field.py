@@ -40,6 +40,7 @@ class UMHSField(NerfactoField):
         temperature: float = 0.5,
         converter: ColourSystem = None,
         pred_dino: bool = False,
+        pred_specular: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(aabb=aabb, num_images=num_images,implementation=implementation, **kwargs)
@@ -48,15 +49,17 @@ class UMHSField(NerfactoField):
         self.num_classes = num_classes
         self.wavelengths = wavelengths
         self.feature_dim = feature_dim
+        self.pred_specular = pred_specular
 
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
             input_dim = self.position_encoding.get_out_dim() + self.geo_feat_dim
+            out_dim = self.num_classes + 1 if self.pred_specular else self.num_classes
             self.feature_mlp = MLP(
                 in_dim=input_dim,
                 num_layers=3,
                 layer_width=hidden_dim_color,
-                out_dim=num_classes + 1,
+                out_dim=out_dim,
                 activation=nn.ReLU(),
                 out_activation=None, # tanh ?
                 implementation=implementation,
@@ -71,8 +74,15 @@ class UMHSField(NerfactoField):
                 self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
 
 
+            #self.position_encoding.get_out_dim()
+            #self.direction_encoding.get_out_dim()
+            if self.pred_specular:
+                in_dim = self.position_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim
+            else:
+                in_dim = self.direction_encoding.get_out_dim() + self.geo_feat_dim  + self.appearance_embedding_dim
+            
             self.mlp_head = MLP(
-                in_dim=self.position_encoding.get_out_dim() + self.geo_feat_dim + self.appearance_embedding_dim,
+                in_dim=in_dim,
                 num_layers=num_layers_color,
                 layer_width=hidden_dim_color,
                 out_dim=num_classes,
@@ -81,15 +91,17 @@ class UMHSField(NerfactoField):
                 implementation=implementation,
             )
 
-            self.mlp_directional = MLP(
-               in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim,
-               num_layers=2,
-               layer_width=16,
-               out_dim=self.wavelengths,
-               activation=nn.ReLU(),
-               out_activation=nn.Sigmoid(),
-               implementation=implementation,
-            )
+
+            if self.pred_specular:
+                self.mlp_directional = MLP(
+                    in_dim=self.direction_encoding.get_out_dim() + self.geo_feat_dim,
+                    num_layers=2,
+                    layer_width=16,
+                    out_dim=self.wavelengths,
+                    activation=nn.ReLU(),
+                    out_activation=nn.Sigmoid(),
+                    implementation=implementation,
+                )
 
             self.converter = converter
             self.temperature = temperature
@@ -164,9 +176,9 @@ class UMHSField(NerfactoField):
             positions_flat = self.position_encoding(positions.view(-1, 3))
             positions_flat = positions_flat.view(-1, density_embedding.size(1),  self.position_encoding.get_out_dim() )
 
-            h = torch.cat(
+            h2 = torch.cat(
                 [
-                    positions_flat.view(-1, self.position_encoding.get_out_dim()),
+                    positions_flat.view(-1, self.position_encoding.get_out_dim()) if self.pred_specular else d,
                     density_embedding.view(-1, self.geo_feat_dim),
                 ]
                 + (
@@ -176,7 +188,7 @@ class UMHSField(NerfactoField):
                 dim=-1,
             ) # direction, density features, appeareance embeddings
 
-            scalar = self.mlp_head(h).view(*outputs_shape, -1, self.num_classes)
+            scalar = self.mlp_head(h2).view(*outputs_shape, -1, self.num_classes)
             features_input = torch.cat([positions_flat, density_embedding], dim=-1) # positions, density
 
             size = features_input.size()
@@ -184,8 +196,10 @@ class UMHSField(NerfactoField):
             
             features = self.feature_mlp(features_input)
             logits = features.view(*size[:-1], -1)
-            logits, s1 = torch.split(logits, [self.num_classes, 1], dim=-1)
-            s1 = F.sigmoid(s1)
+
+            if self.pred_specular:
+                logits, s1 = torch.split(logits, [self.num_classes, 1], dim=-1)
+                s1 = F.sigmoid(s1)
 
             abundances = F.softmax(logits / self.temperature, dim=-1)
 
@@ -199,24 +213,30 @@ class UMHSField(NerfactoField):
             adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
 
-            input_spec = torch.cat(
-               [
-                   d,
-                   density_embedding.view(-1, self.geo_feat_dim),
-               ],
-               dim=-1,
-            )
 
-            specular = self.mlp_directional(input_spec).view(*outputs_shape, self.wavelengths) # (B, ray_sample, wavelengths)
-            spec2 = spec +  (s1 * specular)
+            if self.pred_specular:
+                input_spec = torch.cat(
+                [
+                    d,
+                    density_embedding.view(-1, self.geo_feat_dim),
+                ],
+                dim=-1,
+                )
 
-            outputs["spectral"] = spec2.to(directions)
-            outputs["spectral2"] = spec.to(directions)
+                specular = self.mlp_directional(input_spec).view(*outputs_shape, self.wavelengths) # (B, ray_sample, wavelengths)
+                spec2 = spec +  (s1 * specular)
+
+                outputs["spectral"] = spec2.to(directions)
+                outputs["spectral2"] = spec.to(directions)
+                with torch.no_grad():
+                    outputs["specular"] = (s1 * specular).to(directions)
+                #outputs["spfeatures"] = spfeatures.to(directions)
+            else:
+                outputs["spectral"] = spec.to(directions)
+
+
             outputs["abundances"] = abundances.to(directions)
 
-            with torch.no_grad():
-                outputs["specular"] = (s1 * specular).to(directions)
-            #outputs["spfeatures"] = spfeatures.to(directions)
 
             if self.pred_dino:
                 #positions = self.spatial_distortion(positions).detach()

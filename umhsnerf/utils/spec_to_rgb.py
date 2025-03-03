@@ -65,6 +65,12 @@ class ColourSystem(nn.Module):
         bands = np.array(bands) * 10
         cmf = np.array([component_x(bands), component_y(bands), component_z(bands)])
 
+        rgb_wavelengths = [620, 555, 503]
+        nearest = np.array(bands).reshape(-1, 1) - np.array(rgb_wavelengths).reshape(1, -1)
+        self.nearest = torch.from_numpy(np.argmin(np.abs(nearest), axis=0)).to(device)
+        white = np.array([176.90352, 94.22424, 101.18808]) / 255.0
+        self.white = torch.from_numpy(white).to(device).float()
+
         red, green, blue, white = COLOR_SPACE[cs]
         M = np.vstack((red, green, blue)).T
         MI = np.linalg.inv(M)
@@ -98,6 +104,13 @@ class ColourSystem(nn.Module):
         rgb = torch.matmul(spec, self.transform_matrix)
 
         rgb = self.gamma_correction(rgb)
+
+        #rgb = spec[:,self.nearest] / self.white
+        #rgb = torch.pow(rgb, 1/1.7)
+
+        #rgb = rgb / 1.8
+
+        #rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min())
 
         rgb = rgb.clamp(0, 1)
 
