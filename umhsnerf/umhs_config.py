@@ -47,7 +47,7 @@ umhs_method = MethodSpecification(
             ),
             model=UMHSConfig(
                 eval_num_rays_per_chunk=1 << 15,
-                average_init_density=0.01
+                average_init_density=0.1
             ),
         ),
         optimizers={

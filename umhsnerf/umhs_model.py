@@ -125,7 +125,7 @@ class UMHSConfig(NerfactoModelConfig):
     """Whether use single jitter or not for the proposal networks."""
     predict_normals: bool = False
     """Whether to predict normals or not."""
-    disable_scene_contraction: bool = True
+    disable_scene_contraction: bool =   True
     """Whether to disable scene contraction or not."""
     use_gradient_scaling: bool = True
     """Use gradient scaler where the gradients are lower for points closer to the camera."""

@@ -1,7 +1,7 @@
 CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --machine.seed 42 \
  --log-gradients True \
- --pipeline.num_classes 7 \
+ --pipeline.num_classes 4 \
  --pipeline.model.far-plane 1000 \
  --pipeline.model.near_plane 0.05 \
  --pipeline.model.background-color black \
@@ -14,6 +14,6 @@ CUDA_LAUNCH_BLOCKING=1 CUDA_VISIBLE_DEVICES=2 ns-train umhsnerf \
  --pipeline.datamanager.train-num-rays-per-batch 8192 \
  --pipeline.model.method rgb+spectral \
  --pipeline.model.implementation tcnn \
- --data data/hsnerf/surface_optics/tools/masked_processed_dataset \
- --experiment-name "tools" \
+ --data  data/hsnerf/bayspec/anacampseros/processed_dataset \
+ --experiment-name "anacampseros" \
  --vis viewer+wandb --viewer.websocket-port 7007 \
