@@ -96,7 +96,7 @@ class UMHSConfig(InstantNGPModelConfig):
     The color that is given to masked areas.
     These areas are used to force the density in those regions to be zero.
     """
-    disable_scene_contraction: bool = True
+    disable_scene_contraction: bool = False
     """Whether to disable scene contraction or not."""
 
     # custom configs
@@ -183,7 +183,7 @@ class UMHSModel(NGPModel):
 
 
         #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        self.collider = AABBBoxCollider(self.scene_box)
+        #self.collider = AABBBoxCollider(self.scene_box)
 
         # self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         # self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
@@ -312,8 +312,6 @@ class UMHSModel(NGPModel):
         #    pred_accumulation=outputs["accumulation"],
         #    gt_image=image
         #)
-
-
 
         if self.config.method == "rgb":
             loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
@@ -447,11 +445,11 @@ class UMHSModel(NGPModel):
                     with torch.no_grad():
                         self.field.endmembers[:] = self.field.endmembers.clamp(0, 1)
 
-                    fig = plt.figure()
-                    ax = fig.add_subplot(111)
-                    ax.plot(self.field.endmembers.cpu().detach().T.numpy())
-                    wandb.log({"endmembers": wandb.Image(fig), "temperature": self.field.temperature}, step=step)
-                    plt.close(fig)
+                    #fig = plt.figure()
+                    #ax = fig.add_subplot(111)
+                    #ax.plot(self.field.endmembers.cpu().detach().T.numpy())
+                    #wandb.log({"endmembers": wandb.Image(fig), "temperature": self.field.temperature}, step=step)
+                    #plt.close(fig)
 
                     # each 100 iteration save the endmembers as a npy
                     if self.step % 100 == 0:

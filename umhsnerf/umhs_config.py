@@ -46,7 +46,7 @@ umhs_method = MethodSpecification(
                 eval_num_rays_per_batch=9216,
             ),
             model=UMHSConfig(
-                eval_num_rays_per_chunk=8192
+                eval_num_rays_per_chunk=512
             ),
         ),
         optimizers={

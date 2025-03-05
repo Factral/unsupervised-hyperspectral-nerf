@@ -28,10 +28,11 @@ from umhsnerf.data.umhs_datamanager import UMHSDataManagerConfig
 from umhsnerf.umhs_model import UMHSModel, UMHSConfig
 
 import torch
+import wandb
 
 
 @dataclass
-class UMHSPipelineConfig(DynamicBatchPipelineConfig):
+class UMHSPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
     _target: Type = field(default_factory=lambda: UMHSPipeline)
@@ -43,13 +44,13 @@ class UMHSPipelineConfig(DynamicBatchPipelineConfig):
     check_nan: bool = False
     num_classes: int = 5
     
-    target_num_samples: int = 262144  # 1 << 18
+    #target_num_samples: int = 262144  # 1 << 18
     """The target number of samples to use for an entire batch of rays."""
-    max_num_samples_per_ray: int = 1024  # 1 << 10
+    #max_num_samples_per_ray: int = 1024  # 1 << 10
     """The maximum number of samples to be placed along a ray."""
 
 # based on: https://github.com/nerfstudio-project/nerfstudio/blob/758ea1918e082aa44776009d8e755c2f3a88d2ee/nerfstudio/pipelines/base_pipeline.py#L212
-class UMHSPipeline(DynamicBatchPipeline):
+class UMHSPipeline(VanillaPipeline):
     """UMHS Pipeline
 
     Args:
@@ -63,21 +64,26 @@ class UMHSPipeline(DynamicBatchPipeline):
         config: UMHSPipelineConfig,
         device: str,
         test_mode: Literal["test", "val", "inference"] = "val",
-        world_size: int = 1,
+        world_size: int = 3,
         local_rank: int = 0,
         grad_scaler: Optional[GradScaler] = None,
     ):
-        super(DynamicBatchPipeline, self).__init__(config, device, test_mode, world_size, local_rank)
+        super(VanillaPipeline, self).__init__()
 
-        self.dynamic_num_rays_per_batch = self.config.target_num_samples // self.config.max_num_samples_per_ray
-        self._update_pixel_samplers()
+        self.config = config
+        #self.dynamic_num_rays_per_batch = self.config.target_num_samples // self.config.max_num_samples_per_ray
+        #self._update_pixel_samplers()
 
         if config.check_nan:
             torch.autograd.set_detect_anomaly(True)
 
-        self.config = config
         self.test_mode = test_mode
+        #try:
+        #    wandb.init(project="unmixNeRF", entity="kaust-uis")
+        #except Exception as e:
+        #    print(f"Failed to initialize wandb: {e}")
 
+        world_size = 3
         self.datamanager: OpenNerfDataManager = config.datamanager.setup(
             device=device,
             test_mode=test_mode,
@@ -95,13 +101,13 @@ class UMHSPipeline(DynamicBatchPipeline):
             metadata=self.datamanager.train_dataset.metadata,
             grad_scaler=grad_scaler,
             num_classes=config.num_classes,
-            wavelengths=self.datamanager.train_dataparser_outputs.metadata.get("wavelengths", None)
+            wavelengths=self.datamanager.train_dataparser_outputs.metadata.get("wavelengths", None),
         )
         self.model.to(device)
 
         self.world_size = world_size
         if world_size > 1:
-            self._model = typing.cast(OpenNerfModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
+            self._model = typing.cast(UMHSModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
         # random permutate endmembers in model with torch

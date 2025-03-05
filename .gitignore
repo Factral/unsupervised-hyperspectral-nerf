@@ -15,6 +15,7 @@ data/processed/*
 data/*
 vca*
 testing/*
+wandb/*
 
 feats_pca/*
 
