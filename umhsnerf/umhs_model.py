@@ -17,6 +17,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
+from torchmetrics.image import SpectralAngleMapper
+
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer, CameraOptimizerConfig
@@ -216,7 +218,7 @@ class UMHSModel(NerfactoModel):
         #self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         #self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         self.cluster_probe = ClusterLookup(128, self.kwargs["num_classes"])
-
+        self.sam = SpectralAngleMapper(reduction="none")
 
 
     def label_to_rgb(self, labels):
@@ -409,7 +411,6 @@ class UMHSModel(NerfactoModel):
         gt_rgb = batch["image"].to(self.device)
         gt_rgb = self.renderer_rgb.blend_background(gt_rgb)
 
-
         predicted_rgb = outputs["rgb"]
 
         acc = colormaps.apply_colormap(outputs["accumulation"])
@@ -426,35 +427,31 @@ class UMHSModel(NerfactoModel):
         gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
         predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
 
-        if "spectral" in self.config.method:
-            gt_spectral = batch["hs_image"].to(self.device)
-            gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
-            predicted_spectral = outputs["spectral"]
-            predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
-
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
         lpips = self.lpips(gt_rgb, predicted_rgb)
         se_per_pixel = (gt_rgb - predicted_rgb) ** 2
         se_per_pixel = se_per_pixel.squeeze().permute(1, 2, 0).mean(dim=-1).unsqueeze(-1)
 
-        # all of these metrics will be logged as scalars
-        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
-        metrics_dict["lpips"] = float(lpips)
-
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim), "lpips": float(lpips)}
         if "spectral" in self.config.method:
+            gt_spectral = batch["hs_image"].to(self.device)
+            gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
+            predicted_spectral = outputs["spectral"]
+            predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
             psnr_spectral = self.psnr(gt_spectral, predicted_spectral)
+            ssim_spectral = self.ssim(gt_spectral, predicted_spectral)
+            
+            sam_spectral =  torch.nanmean(self.sam(predicted_spectral, gt_spectral))
             metrics_dict["psnr_spectral"] = float(psnr_spectral.item())
+            metrics_dict["ssim_spectral"] = float(ssim_spectral)
+            metrics_dict["sam_spectral"] = float(sam_spectral)
 
+            #rmse
+            metrics_dict["rmse_spectral"] = torch.sqrt(torch.nn.functional.mse_loss(predicted_spectral, gt_spectral)).item()
+            
+    
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
-
-        for i in range(self.config.num_proposal_iterations):
-            key = f"prop_depth_{i}"
-            prop_depth_i = colormaps.apply_depth_colormap(
-                outputs[key],
-                accumulation=outputs["accumulation"],
-            )
-            images_dict[key] = prop_depth_i
 
         return metrics_dict, images_dict
 

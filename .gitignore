@@ -19,6 +19,9 @@ testing/*
 feats_pca/*
 
 renders/*
+wandb/*
+segmentation/*
+
 
 endmembers.npy
 endmembers.png
