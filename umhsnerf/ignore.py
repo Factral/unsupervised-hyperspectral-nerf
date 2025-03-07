@@ -166,10 +166,4 @@ class UMHSPipeline(VanillaPipeline):
         self.load_state_dict(state)
         # perm endmembers, is a matrix of n_classes x bands
         perm_idx = torch.randperm(self.model.field.endmembers.shape[0])
-        #self.model.field.endmembers = torch.nn.Parameter(self.model.field.endmembers[perm_idx])
-        #self.model.field.endmembers = torch.nn.Parameter(torch.randn_like(self.model.field.endmembers))
-        # save the endmembers as npy
-        np.save("endmembers_hotdog.npy", self.model.field.endmembers.detach().cpu().numpy())
-        #etrics_dict = self.get_average_eval_image_metrics(step=1)
-        #print(metrics_dict)
-        #writer.put_dict(name="Eval Images Metrics Dict (all images)", scalar_dict=metrics_dict, step=step)
+        self.model.field.endmembers = self.model.field.endmembers[perm_idx]

@@ -38,6 +38,7 @@ umhs_method = MethodSpecification(
         steps_per_save=2000,
         max_num_iterations=20000,
         mixed_precision=True,
+        save_only_latest_checkpoint=False,
         pipeline=UMHSPipelineConfig(
             datamanager=UMHSDataManagerConfig(
                 _target=UMHSDataManager[HyperspectralDataset],
@@ -46,7 +47,13 @@ umhs_method = MethodSpecification(
                 eval_num_rays_per_batch=9216,
             ),
             model=UMHSConfig(
-                eval_num_rays_per_chunk=512
+                eval_num_rays_per_chunk=512,
+                grid_levels=1,
+                alpha_thre=0.0,
+                cone_angle=0.0,
+                disable_scene_contraction=True,
+                near_plane=0.01,
+                background_color="random",
             ),
         ),
         optimizers={

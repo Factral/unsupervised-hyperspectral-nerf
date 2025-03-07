@@ -18,6 +18,8 @@ testing/*
 wandb/*
 
 feats_pca/*
+segmentation/*
+
 
 renders/*
 

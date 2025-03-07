@@ -7,15 +7,17 @@ class ClusterLookup(nn.Module):
         super(ClusterLookup, self).__init__()
         self.n_classes = n_classes
         self.dim = dim
-        self.clusters = torch.nn.Parameter(torch.randn(n_classes, dim))
+        #self.clusters = torch.nn.Parameter(torch.randn(n_classes, dim))
         
+
     def reset_parameters(self):
         with torch.no_grad():
             self.clusters.copy_(torch.randn(self.n_classes, self.dim))
             
-    def forward(self, x, alpha, log_probs=False):
+    def forward(self, x, alpha, log_probs=False, clusters=None):
         # x shape: [P, C] where P is number of pixels
-        normed_clusters = F.normalize(self.clusters, dim=1)  # [N, C]
+        clusters = self.clusters if clusters is None else clusters
+        normed_clusters = F.normalize(clusters, dim=1)  # [N, C]
         normed_features = F.normalize(x, dim=1)  # [P, C]
         
         # Computing inner products with matrix multiplication
@@ -23,7 +25,7 @@ class ClusterLookup(nn.Module):
         inner_products = torch.matmul(normed_features, normed_clusters.t())
         
         if alpha is None:
-            cluster_probs = F.one_hot(torch.argmax(inner_products, dim=1), self.clusters.shape[0]) \
+            cluster_probs = F.one_hot(torch.argmax(inner_products, dim=1), clusters.shape[0]) \
                 .to(torch.float32)  # [P, N]
         else:
             cluster_probs = nn.functional.softmax(inner_products * alpha, dim=1)  # [P, N]

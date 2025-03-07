@@ -1,0 +1,1 @@
+ns-viewer --load-config outputs/hotdog-t0.4-k6-specular/umhsnerf/2025-03-07_034249/config.yml

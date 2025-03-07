@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 
 import nerfacc
 
+from torchmetrics.image import SpectralAngleMapper
 from nerfstudio.models.instant_ngp  import NGPModel, InstantNGPModelConfig
 from nerfstudio.models.nerfacto import NerfactoModel, NerfactoModelConfig  # for subclassing Nerfacto model
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
@@ -55,6 +56,8 @@ from umhsnerf.umhs_renderer import SpectralRenderer, get_weights_spectral
 from umhsnerf.utils.clusterprobe import ClusterLookup
 from nerfstudio.configs.config_utils import to_immutable_dict
 
+from torch.nn import CrossEntropyLoss
+
 
 @dataclass
 class UMHSConfig(InstantNGPModelConfig):
@@ -65,7 +68,7 @@ class UMHSConfig(InstantNGPModelConfig):
 
     _target: Type = field(default_factory=lambda: UMHSModel)
     """target class to instantiate"""
-    enable_collider: bool = False
+    enable_collider: bool = True
     """Whether to create a scene collider to filter rays."""
     collider_params: Optional[Dict[str, float]] = to_immutable_dict({"near_plane": 2.0, "far_plane": 6.0}) #None
     """Instant NGP doesn't use a collider."""
@@ -128,15 +131,15 @@ class UMHSModel(NGPModel):
             scene_contraction = SceneContraction(order=float("inf"))
 
         appearance_embedding_dim = 0 if self.config.use_appearance_embedding else 32
-
+ 
         self.class_colors = {
-            0: torch.tensor([0., 0., 0.]),      #  - negro
-            1: torch.tensor([0.9, 0., 0.]),     #  - rojo
-            2: torch.tensor([0., 0.9, 0.]),     #  - verde
-            3: torch.tensor([0., 0., 0.9]),     #  - azul
-            4: torch.tensor([0.9, 0.9, 0.]),    #  - amarillo
-            5: torch.tensor([0., 0.9, 0.9]),    #  - cian
-            6: torch.tensor([0.9, 0., 0.9])     #  - magenta
+            0: torch.tensor([0.49, 0.29, 0.95]),     # ocher_silicone
+            1: torch.tensor([0.29, 0.95, 0.30]),     # red_billiard
+            2: torch.tensor([0.95, 0.29, 0.47]),     # orange_silicone
+            3: torch.tensor([0.29, 0.66, 0.95]),     # fake_pearl
+            4: torch.tensor([0.86, 0.95, 0.29]),     # pom
+            5: torch.tensor([0.85, 0.29, 0.95]),     # gold
+            6: torch.tensor([0.29, 0.95, 0.66])      # peek
         }
 
         if 'spectral' in self.config.method:
@@ -148,6 +151,9 @@ class UMHSModel(NGPModel):
         self.converter = ColourSystem(bands=self.kwargs["wavelengths"], cs='sRGB')
         
         self.rgb_loss = MSELoss()
+        self.seg_loss = CrossEntropyLoss()
+
+        self.sam = SpectralAngleMapper(reduction="none")
 
         self.field = UMHSField(
             aabb=self.scene_box.aabb,
@@ -168,7 +174,7 @@ class UMHSModel(NGPModel):
         ) 
 
         # Reinitialize the occupancy grid and sampler using the new field.
-        self.scene_aabb = torch.nn.Parameter(self.scene_box.aabb.flatten(), requires_grad=True)
+        self.scene_aabb = torch.nn.Parameter(self.scene_box.aabb.flatten(), requires_grad=False)
         if self.config.render_step_size is None:
             self.config.render_step_size = (((self.scene_aabb[3:] - self.scene_aabb[:3]) ** 2).sum().sqrt().item() / 1000)
         self.occupancy_grid = nerfacc.OccGridEstimator(
@@ -183,10 +189,11 @@ class UMHSModel(NGPModel):
 
 
         #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        #self.collider = AABBBoxCollider(self.scene_box)
+        self.collider = AABBBoxCollider(self.scene_box)
 
         # self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
-        # self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
+        self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
+        # self.cluster_probe = nn.Linear(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         # self.cluster_probe = ClusterLookup(128, self.kwargs["num_classes"])
 
     def label_to_rgb(self, labels):
@@ -275,6 +282,15 @@ class UMHSModel(NGPModel):
                 for i in range(field_outputs["abundances"].shape[-1]):
                     outputs[f"abundances_{i}"] = abundaces[:, i]
 
+
+            inner_products, cluster_probs = self.cluster_probe(spectral, alpha=0.2, clusters = self.field.endmembers)
+            acc_if = torch.where(accumulation > 0.5, torch.tensor(1.).to(accumulation.device), torch.tensor(0.).to(accumulation.device))
+            outputs["seg_probs"] = cluster_probs
+            #outputs["inner_products"] = inner_products
+            with torch.no_grad():
+                outputs["seg_pred"] = self.label_to_rgb(cluster_probs.argmax(1)) * acc_if
+
+
             if self.config.pred_dino:
                 dino = self.renderer_spectral(spectral=field_outputs["dino"], weights=weights.detach())
                 outputs["dino"] = dino
@@ -300,6 +316,9 @@ class UMHSModel(NGPModel):
             if 'spectral2' in outputs:
                 pred_spectral2 = outputs["spectral2"]
 
+            if 'seg_image' in batch:
+                seg_image = batch["seg_image"].to(self.device)
+
         #pred_spectral, gt_spectral = self.renderer_spectral.blend_background_for_loss_computation(
         #    pred_image=outputs["spectral"],
         #    pred_accumulation=outputs["accumulation"],
@@ -307,11 +326,18 @@ class UMHSModel(NGPModel):
         #    rgba_image=image
         #)
 
-        #pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
-        #    pred_image=outputs["rgb"],
+        #pred_spectral2, _ = self.renderer_spectral.blend_background_for_loss_computation(
+        #    pred_image=outputs["spectral2"],
         #    pred_accumulation=outputs["accumulation"],
-        #    gt_image=image
+        #    gt_image=gt_spectral,
+        #    rgba_image=image
         #)
+
+        pred_rgb, gt_rgb = self.renderer_rgb.blend_background_for_loss_computation(
+            pred_image=outputs["rgb"],
+            pred_accumulation=outputs["accumulation"],
+            gt_image=image
+        )
 
         if self.config.method == "rgb":
             loss_dict["rgb_loss"] = self.rgb_loss(pred_rgb, gt_rgb)
@@ -320,10 +346,12 @@ class UMHSModel(NGPModel):
         elif self.config.method == "rgb+spectral":
             loss_dict["spectral_loss"] = 5 * self.spectral_loss(pred_spectral, gt_spectral)
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
+            #loss_dict["seg_loss"] = -(outputs["seg_probs"] * outputs["inner_products"]).sum(1).mean()
                 
             if self.config.pred_specular:
                 loss_dict["spectral_loss2"] = 1 * self.spectral_loss(pred_spectral2, gt_spectral)
 
+            #loss_dict["seg_loss"] = self.seg_loss(outputs["seg_probs"], seg_image.long().to(self.device))
 
         if self.config.pred_dino:
             loss_dict["dino_mse"] = torch.nn.functional.mse_loss(outputs["dino"], batch["dino_feat"]).nanmean()
@@ -377,29 +405,47 @@ class UMHSModel(NGPModel):
         gt_rgb = torch.moveaxis(gt_rgb, -1, 0)[None, ...]
         predicted_rgb = torch.moveaxis(predicted_rgb, -1, 0)[None, ...]
 
-        if "spectral" in self.config.method:
-            gt_spectral = batch["hs_image"].to(self.device)
-            gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
-            predicted_spectral = outputs["spectral"]
-            predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
-
         psnr = self.psnr(gt_rgb, predicted_rgb)
         ssim = self.ssim(gt_rgb, predicted_rgb)
         lpips = self.lpips(gt_rgb, predicted_rgb)
         se_per_pixel = (gt_rgb - predicted_rgb) ** 2
         se_per_pixel = se_per_pixel.squeeze().permute(1, 2, 0).mean(dim=-1).unsqueeze(-1)
 
-        # all of these metrics will be logged as scalars
-        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}
-        metrics_dict["lpips"] = float(lpips)
-
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim), "lpips": float(lpips)}
         if "spectral" in self.config.method:
+            gt_spectral = batch["hs_image"].to(self.device)
+            gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
+            predicted_spectral = outputs["spectral"]
+            predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
             psnr_spectral = self.psnr(gt_spectral, predicted_spectral)
+            ssim_spectral = self.ssim(gt_spectral, predicted_spectral)
+            
+            sam_spectral =  torch.nanmean(self.sam(predicted_spectral, gt_spectral))
             metrics_dict["psnr_spectral"] = float(psnr_spectral.item())
+            metrics_dict["ssim_spectral"] = float(ssim_spectral)
+            metrics_dict["sam_spectral"] = float(sam_spectral)
 
+            #rmse
+            metrics_dict["rmse_spectral"] = torch.sqrt(torch.nn.functional.mse_loss(predicted_spectral, gt_spectral)).item()
+            
+    
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
         return metrics_dict, images_dict
+
+    def compute_sam(self, pred, gt, eps=1e-8):
+        """
+        Compute the Spectral Angle Mapper (SAM) between the predicted and ground truth spectral images.
+        Assumes pred and gt have shape (..., channels).
+        Returns the mean spectral angle in degrees.
+        """
+        dot_product = (pred * gt).sum(dim=-1)
+        norm_pred = torch.norm(pred, dim=-1)
+        norm_gt = torch.norm(gt, dim=-1)
+        cos_angle = dot_product / (norm_pred * norm_gt + eps)
+        cos_angle = torch.clamp(cos_angle, -1, 1)
+        angle = torch.acos(cos_angle)
+        return angle.mean()
 
     # related to https://github.com/NVlabs/tiny-cuda-nn/issues/377
     @torch.no_grad()
@@ -444,14 +490,6 @@ class UMHSModel(NGPModel):
                 def clamp_endmembers(step):
                     with torch.no_grad():
                         self.field.endmembers[:] = self.field.endmembers.clamp(0, 1)
-
-                    #fig = plt.figure()
-                    #ax = fig.add_subplot(111)
-                    #ax.plot(self.field.endmembers.cpu().detach().T.numpy())
-                    #wandb.log({"endmembers": wandb.Image(fig), "temperature": self.field.temperature}, step=step)
-                    #plt.close(fig)
-
-                    # each 100 iteration save the endmembers as a npy
                     if self.step % 100 == 0:
                         np.save(f"endmembers.npy", self.field.endmembers.cpu().detach().numpy())
 
@@ -495,7 +533,6 @@ class UMHSModel(NGPModel):
             outputs = self.forward(ray_bundle=ray_bundle)
             for output_name, output in outputs.items():
                 if not isinstance(output, torch.Tensor):
-                    # TODO: handle lists of tensors as well
                     continue
                 # move the chunk outputs from the model device back to the device of the inputs.
                 outputs_lists[output_name].append(output.to(input_device))

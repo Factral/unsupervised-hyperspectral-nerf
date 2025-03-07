@@ -8,3 +8,7 @@
 #ns-render camera-path --load-config "outputs/testing/umhsnerf/2025-02-14_053218/config.yml" --camera-path-filename "/home/perezpnf/unsupervised-hyperspectral-nerf/data/processed/ajar/camera_paths/2025-01-14-01-51-09.json" --output-path "renders/ajar/random.mp4" --rendered-output-names "rgb" "residual_4" "residual_20"
 
 ns-render camera-path --load-config "outputs/testing/umhsnerf/2025-02-14_074958/config.yml" --camera-path-filename "/home/perezpnf/unsupervised-hyperspectral-nerf/data/processed/hotdog/camera_paths/2025-02-14-07-50-17.json" --output-path "renders/hotdog/2025-02-14-07-50-17.mp4" --rendered-output-names "rgb"
+
+--rendered-output-names "wv_0" "wv_5" "wv_10" "wv_15" "wv_20"    
+
+CUDA_VISIBLE_DEVICES=1 ns-render camera-path --load-config outputs/hotdog-t0.4-k6-specular/umhsnerf/2025-03-07_034249/config.yml --camera-path-filename /home/perezpnf/unsupervised-hyperspectral-nerf/data/processed/hotdog/camera_paths/2025-03-07-05-06-45.json --output-path renders/hotdog/2025-03-07-05-06-48.mp4 --rendered-output-names "wv_0" "wv_5" "wv_10" "wv_15" "wv_20"     

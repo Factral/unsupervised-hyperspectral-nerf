@@ -79,11 +79,11 @@ class UMHSDataParserConfig(DataParserConfig):
     """How much to downscale images. If not set, images are chosen such that the max dimension is <1600px."""
     scene_scale: float = 1.0
     """How much to scale the region of interest by."""
-    orientation_method: Literal["pca", "up", "vertical", "none"] = "up"
+    orientation_method: Literal["pca", "up", "vertical", "none"] = "none"
     """The method to use for orientation."""
-    center_method: Literal["poses", "focus", "none"] = "poses"
+    center_method: Literal["poses", "focus", "none"] = "none"
     """The method to use to center the poses."""
-    auto_scale_poses: bool = True
+    auto_scale_poses: bool = False
     """Whether to automatically scale the poses to fit in +/- 1 bounding box."""
     eval_mode: Literal["fraction", "filename", "interval", "all"] = "filename"
     """
@@ -128,6 +128,7 @@ class UMHSDataParser(DataParser):
         mask_filenames = []
         depth_filenames = []
         hs_filenames = []
+        seg_filenames = []
         dino_filenames = []
         poses = []
         
@@ -208,6 +209,11 @@ class UMHSDataParser(DataParser):
                 )
                 mask_filenames.append(mask_fname)
 
+            if "seg_file_path" in frame:
+                seg_filepath = Path(frame["seg_file_path"])
+                seg_fname = self._get_fname(seg_filepath, data_dir, downsample_folder_prefix="segs_")
+                seg_filenames.append(seg_fname)
+
             if "depth_file_path" in frame:
                 depth_filepath = Path(frame["depth_file_path"])
                 depth_fname = self._get_fname(depth_filepath, data_dir, downsample_folder_prefix="depths_")
@@ -231,6 +237,7 @@ class UMHSDataParser(DataParser):
         Different number of image and depth filenames.
         You should check that depth_file_path is specified for every frame (or zero frames) in transforms.json.
         """
+
         assert len(hs_filenames) == 0 or (len(hs_filenames) == len(image_filenames)), """
         Different number of image and hyperspectral filenames.
         You should check that hyperspectral_file_path is specified for every frame (or zero frames) in transforms.json.
@@ -302,6 +309,7 @@ class UMHSDataParser(DataParser):
         mask_filenames = [mask_filenames[i] for i in indices] if len(mask_filenames) > 0 else []
         depth_filenames = [depth_filenames[i] for i in indices] if len(depth_filenames) > 0 else []
         hs_filenames = [hs_filenames[i] for i in indices] if len(hs_filenames) > 0 else []
+        seg_filenames = [seg_filenames[i] for i in indices] if len(seg_filenames) > 0 else []
         dino_filenames = [dino_filenames[i] for i in indices] if len(dino_filenames) > 0 else []
 
         if len(hs_filenames) > 0:
@@ -461,6 +469,7 @@ class UMHSDataParser(DataParser):
 
         CONSOLE.log(f"Loaded {len(image_filenames)} images for {split} split.")
         CONSOLE.log(f"Hyperspectral images: {len(hs_filenames)}, {hs_filenames[:3]}")
+        CONSOLE.log(f"Segmentation images: {len(seg_filenames)}, {seg_filenames[:3]}")
         CONSOLE.log(f"DINO features: {len(dino_filenames)}, {dino_filenames[:3]}")
 
         metadata.update({"split": split, "num_classes": self.config.num_classes, "wavelengths": wavelengths})
@@ -479,6 +488,7 @@ class UMHSDataParser(DataParser):
                 "mask_color": self.config.mask_color,
                 "hs_filenames": hs_filenames if len(hs_filenames) > 0 else None,
                 "dino_filenames": dino_filenames if len(dino_filenames) > 0 else None,
+                "seg_filenames": seg_filenames if len(seg_filenames) > 0 else None,
                 **metadata,
             },
         )
