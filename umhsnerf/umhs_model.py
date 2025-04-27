@@ -68,7 +68,7 @@ class UMHSConfig(InstantNGPModelConfig):
 
     _target: Type = field(default_factory=lambda: UMHSModel)
     """target class to instantiate"""
-    enable_collider: bool = True
+    enable_collider: bool = False
     """Whether to create a scene collider to filter rays."""
     collider_params: Optional[Dict[str, float]] = to_immutable_dict({"near_plane": 2.0, "far_plane": 6.0}) #None
     """Instant NGP doesn't use a collider."""
@@ -132,15 +132,34 @@ class UMHSModel(NGPModel):
 
         appearance_embedding_dim = 0 if self.config.use_appearance_embedding else 32
  
+        #self.class_colors = {
+        #    0: torch.tensor([0.49, 0.29, 0.95]),     # ocher_silicone
+        #    1: torch.tensor([0.29, 0.95, 0.30]),     # red_billiard
+        #    2: torch.tensor([0.95, 0.29, 0.47]),     # orange_silicone
+        #    3: torch.tensor([0.29, 0.66, 0.95]),     # fake_pearl
+        #    4: torch.tensor([0.86, 0.95, 0.29]),     # pom
+        #    5: torch.tensor([0.85, 0.29, 0.95]),     # gold
+        #    6: torch.tensor([0.29, 0.95, 0.66])      # peek
+        #}
         self.class_colors = {
-            0: torch.tensor([0.49, 0.29, 0.95]),     # ocher_silicone
-            1: torch.tensor([0.29, 0.95, 0.30]),     # red_billiard
-            2: torch.tensor([0.95, 0.29, 0.47]),     # orange_silicone
-            3: torch.tensor([0.29, 0.66, 0.95]),     # fake_pearl
-            4: torch.tensor([0.86, 0.95, 0.29]),     # pom
-            5: torch.tensor([0.85, 0.29, 0.95]),     # gold
-            6: torch.tensor([0.29, 0.95, 0.66])      # peek
-        }
+        0: torch.tensor([0.49, 0.29, 0.95]),
+        1: torch.tensor([0.29, 0.95, 0.30]),
+        2: torch.tensor([0.95, 0.29, 0.47]),
+        3: torch.tensor([0.29, 0.66, 0.95]),
+        4: torch.tensor([0.86, 0.95, 0.29]),
+        5: torch.tensor([0.85, 0.29, 0.95]),
+        6: torch.tensor([0.29, 0.95, 0.66]),
+        7: torch.tensor([0.95, 0.46, 0.29]),
+        8: torch.tensor([0.29, 0.30, 0.95]),
+        9: torch.tensor([0.50, 0.95, 0.29]),
+        10: torch.tensor([0.95, 0.29, 0.69]),
+        11: torch.tensor([0.29, 0.88, 0.95]),
+        12: torch.tensor([0.95, 0.82, 0.29]),
+        13: torch.tensor([0.63, 0.29, 0.95]),
+        14: torch.tensor([0.29, 0.95, 0.43])
+    }
+        self.i = 0
+
 
         if 'spectral' in self.config.method:
             self.renderer_spectral = SpectralRenderer() 
@@ -189,7 +208,7 @@ class UMHSModel(NGPModel):
 
 
         #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
-        self.collider = AABBBoxCollider(self.scene_box)
+        #self.collider = AABBBoxCollider(self.scene_box)
 
         # self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
         self.cluster_probe = ClusterLookup(len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])
@@ -288,6 +307,7 @@ class UMHSModel(NGPModel):
             outputs["seg_probs"] = cluster_probs
             #outputs["inner_products"] = inner_products
             with torch.no_grad():
+                outputs["seg_raw"] = cluster_probs.argmax(1) * acc_if.squeeze()
                 outputs["seg_pred"] = self.label_to_rgb(cluster_probs.argmax(1)) * acc_if
 
 
@@ -416,6 +436,8 @@ class UMHSModel(NGPModel):
             gt_spectral = batch["hs_image"].to(self.device)
             gt_spectral = torch.moveaxis(gt_spectral, -1, 0)[None, ...]
             predicted_spectral = outputs["spectral"]
+            #plt.figure();plt.imshow(predicted_spectral[:,:,30].cpu().numpy(), cmap='gray');plt.colorbar();plt.savefig("mrae_spectral.png")
+            #import pdb; pdb.set_trace()
             predicted_spectral = torch.moveaxis(predicted_spectral, -1, 0)[None, ...]
             psnr_spectral = self.psnr(gt_spectral, predicted_spectral)
             ssim_spectral = self.ssim(gt_spectral, predicted_spectral)
@@ -428,6 +450,59 @@ class UMHSModel(NGPModel):
             #rmse
             metrics_dict["rmse_spectral"] = torch.sqrt(torch.nn.functional.mse_loss(predicted_spectral, gt_spectral)).item()
             
+            #calculate MRAE for the 70th band, note the previous moveaxis
+            #mrae_spectral = torch.mean(torch.abs(predicted_spectral[0, :] - gt_spectral[0, :]),dim=0) #/ (gt_spectral[0, 70]+1e-6)
+            # save as image with jet colormap with colorbar, maybe you need to transpose
+            #import random
+            #fig = plt.figure();plt.imshow(mrae_spectral.cpu().numpy(), cmap='jet');
+            #lim superior is 0.5
+            #plt.clim(0, 0.5)
+            #plt.colorbar()
+            #save fig with random name
+            #plt.savefig(f"eval/mrae_spectral_{random.randint(0,1000)}.png")
+
+            #save the chhanel 70 as image with gray as colormap
+
+            #fig = plt.figure();plt.imshow(predicted_spectral[0, 70].cpu().numpy(), cmap='gray');
+            #plt.colorbar()
+            #plt.savefig(f"eval/70_band_{random.randint(0,1000)}.png")
+
+            # ground truth channel 70th
+            #fig = plt.figure();plt.imshow(gt_spectral[0, 70].cpu().numpy(), cmap='gray');
+            #plt.colorbar()
+            #plt.savefig(f"eval/gt_70_band_{random.randint(0,1000)}.png")
+
+            # save 70 band as gray
+            #plt.imshow(predicted_spectral[0, 70].cpu().numpy(), cmap='gray')
+            #plt.colorbar()
+            #plt.savefig("70_band.png")
+
+            #save the abundaces_0 ... abundances_3 as images
+            #import random 
+            #id_ = random.randint(0,1000)
+            #for i in range(4):
+                # normalize each abundance with the max
+            #    abundace = outputs[f"abundances_{i}"] / torch.max(outputs[f"abundances_{i}"])
+
+            #    fig = plt.figure();plt.imshow(abundace.cpu().numpy(), cmap="jet");
+            #    plt.colorbar()
+            #    plt.savefig(f"eval/abundances_{i}_{id_}.png")
+
+            #save the seg_pred directly as image uint8
+            #get filename
+            self.i = self.i + 1
+            FOLDER = 'cbox_sphere'
+            filename = f"./eval/{FOLDER}/seg_pred_{self.i}.png"
+            print(filename)
+            #import pdb; pdb.set_trace()
+            seg_pred = outputs["seg_raw"].cpu().numpy().astype(np.uint8)
+            # also save a color version in a subfolder called color
+            color_seg_pred = outputs["seg_pred"].cpu().numpy()
+            #import pdb; pdb.set_trace()
+            print(seg_pred.shape)
+            writeStatus= cv2.imwrite(filename, seg_pred.squeeze())
+            print(writeStatus)
+            cv2.imwrite(f"./eval/{FOLDER}/color/{self.i}.png", color_seg_pred*255)
     
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
@@ -540,3 +615,6 @@ class UMHSModel(NGPModel):
         for output_name, outputs_list in outputs_lists.items():
             outputs[output_name] = torch.cat(outputs_list).view(image_height, image_width, -1)
         return outputs
+
+
+

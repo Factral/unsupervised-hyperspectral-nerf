@@ -1,0 +1,1 @@
+ns-viewer --load-config outputs/anacampseros-t0.7-k4/umhsnerf/2025-03-08_062627/config.yml

@@ -7,7 +7,7 @@ class ClusterLookup(nn.Module):
         super(ClusterLookup, self).__init__()
         self.n_classes = n_classes
         self.dim = dim
-        #self.clusters = torch.nn.Parameter(torch.randn(n_classes, dim))
+        # the clusters will be the same endmembers!
         
 
     def reset_parameters(self):

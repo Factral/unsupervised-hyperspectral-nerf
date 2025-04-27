@@ -16,6 +16,7 @@ data/*
 vca*
 testing/*
 wandb/*
+eval/*
 
 feats_pca/*
 segmentation/*
@@ -25,6 +26,8 @@ renders/*
 
 endmembers.npy
 endmembers.png
+
+rsync -avzh --progress /home/perezpnf/unsupervised-hyperspectral-nerf/data/hsnerf/bayspec --exclude=venv perezpnf@10.67.24.164:~/
 
 vca.npy
 vca.png

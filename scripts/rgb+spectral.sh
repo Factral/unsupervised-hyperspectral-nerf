@@ -10,8 +10,8 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 ns-train umhsnerf \
  --pipeline.model.spectral_loss_weight 5.0 \
  --pipeline.model.temperature 0.7 \
  --pipeline.model.pred_dino False \
- --pipeline.model.pred_specular True \
- --pipeline.model.load_vca True \
+ --pipeline.model.pred_specular False \
+ --pipeline.model.load_vca False \
  --pipeline.datamanager.images-on-gpu False \
  --pipeline.datamanager.patch-size 1 \
  --pipeline.datamanager.train-num-rays-per-batch 2048 \

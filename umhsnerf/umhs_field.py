@@ -38,7 +38,7 @@ class UMHSField(NerfactoField):
         hidden_dim_color: int = 64,
         wavelengths: int = 128,
         method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb",
-        num_classes: int = 7,
+        num_classes: int = 4,
         feature_dim: int = 256,
         temperature: float = 0.5,
         converter: ColourSystem = None,
@@ -80,10 +80,10 @@ class UMHSField(NerfactoField):
                     self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
             else:
                 # will be loaded from the checkpoint
-                endmembers = torch.randn(self.num_classes, self.wavelengths)
+                self.endmembers = torch.randn(self.num_classes, self.wavelengths).cuda()
         
             # register buffer
-            #self.register_buffer("endmembers", endmembers)
+            #self.register_buffer("endmembers", self.endmembers)
 
             #self.direction_encoding.get_out_dim()
             #self.position_encoding.get_out_dim()
@@ -110,6 +110,7 @@ class UMHSField(NerfactoField):
             self.converter = converter
             self.temperature = temperature
             self.pred_dino = pred_dino
+            self.use_scalar = True
 
             if pred_dino:
                 grid_layers = (12,12)
@@ -191,7 +192,7 @@ class UMHSField(NerfactoField):
                 density_embedding = density_embedding.unsqueeze(0)
 
 
-            h = torch.cat(
+            h1 = torch.cat(
                 [
                     #d,
                     positions_flat.view(-1, self.position_encoding.get_out_dim()),
@@ -204,7 +205,10 @@ class UMHSField(NerfactoField):
                 dim=-1,
             ) # direction, density features, appeareance embeddings
 
-            scalar = self.mlp_head(h).view(*outputs_shape, -1, self.num_classes)
+            if self.use_scalar:
+                scalar = self.mlp_head(h1).view(*outputs_shape, -1, self.num_classes)
+                scalar = F.sigmoid(scalar)
+
             features_input = torch.cat([positions_flat, density_embedding], dim=-1) # positions, density
 
             size = features_input.size()
@@ -218,17 +222,20 @@ class UMHSField(NerfactoField):
                 s1 = F.sigmoid(s1)
 
             abundances = F.softmax(logits / self.temperature, dim=-1)
+            #abundances = logits
 
             endmembers = self.endmembers.unsqueeze(0).unsqueeze(0)
     
             endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
 
             scalar = F.sigmoid(scalar)
-            #scalar = F.relu(scalar)
 
-            adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
+            if self.use_scalar:
+                adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)
+            else:
+                adapted_endmembers = endmembers
+
             spec = (adapted_endmembers  @ abundances.unsqueeze(-1)).squeeze() # linear mixing model spec = EA
-
 
             if self.pred_specular:
 

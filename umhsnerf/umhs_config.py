@@ -48,12 +48,12 @@ umhs_method = MethodSpecification(
             ),
             model=UMHSConfig(
                 eval_num_rays_per_chunk=512,
-                grid_levels=1,
-                alpha_thre=0.0,
-                cone_angle=0.0,
-                disable_scene_contraction=True,
-                near_plane=0.01,
-                background_color="random",
+                #grid_levels=1,
+                #alpha_thre=0.0,
+                #cone_angle=0.0,
+                #disable_scene_contraction=True,
+                #near_plane=0.01,
+                #background_color="black",
             ),
         ),
         optimizers={

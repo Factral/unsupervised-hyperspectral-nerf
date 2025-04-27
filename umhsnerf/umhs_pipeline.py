@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional, Type
 from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Type, Union, cast
 
-
+import numpy as np
 import torch.distributed as dist
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -83,7 +83,7 @@ class UMHSPipeline(VanillaPipeline):
         #except Exception as e:
         #    print(f"Failed to initialize wandb: {e}")
 
-        world_size = 3
+        world_size = 1
         self.datamanager: OpenNerfDataManager = config.datamanager.setup(
             device=device,
             test_mode=test_mode,
@@ -105,8 +105,10 @@ class UMHSPipeline(VanillaPipeline):
         )
         self.model.to(device)
 
-        self.world_size = world_size
+        self.world_size = 1
+        world_size=1
         if world_size > 1:
+            print(world_size, "world")
             self._model = typing.cast(UMHSModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
             dist.barrier(device_ids=[local_rank])
 
@@ -159,6 +161,7 @@ class UMHSPipeline(VanillaPipeline):
             loaded_state: pre-trained model state dict
             step: training step of the loaded checkpoint
         """
+        print(loaded_state.items())
         state = {
             (key[len("module.") :] if key.startswith("module.") else key): value for key, value in loaded_state.items()
         }
@@ -170,6 +173,6 @@ class UMHSPipeline(VanillaPipeline):
         #self.model.field.endmembers = torch.nn.Parameter(torch.randn_like(self.model.field.endmembers))
         # save the endmembers as npy
         np.save("endmembers_hotdog.npy", self.model.field.endmembers.detach().cpu().numpy())
-        #etrics_dict = self.get_average_eval_image_metrics(step=1)
+        #metrics_dict = self.get_average_eval_image_metrics(step=1)
         #print(metrics_dict)
         #writer.put_dict(name="Eval Images Metrics Dict (all images)", scalar_dict=metrics_dict, step=step)
