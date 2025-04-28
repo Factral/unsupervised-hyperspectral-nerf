@@ -48,7 +48,6 @@ from nerfstudio.model_components.losses import (
 import wandb
 
 from umhsnerf.umhs_field import UMHSField
-from umhsnerf.data.utils.dino_extractor import ViTExtractor
 from umhsnerf.utils.metrics import mse2psnr
 from umhsnerf.utils.spec_to_rgb import ColourSystem
 from umhsnerf.utils.hooks import nan_hook
@@ -101,6 +100,9 @@ class UMHSConfig(InstantNGPModelConfig):
     """
     disable_scene_contraction: bool = False
     """Whether to disable scene contraction or not."""
+
+    implementation: Literal["tcnn", "torch"] = "torch"
+    """Which implementation to use for the model."""
 
     # custom configs
     method: Literal["rgb", "spectral", "rgb+spectral"] = "rgb"
@@ -181,7 +183,7 @@ class UMHSModel(NGPModel):
             log2_hashmap_size=self.config.log2_hashmap_size,
             max_res=self.config.max_res,
             spatial_distortion=scene_contraction,
-            implementation="tcnn",
+            implementation=self.config.implementation,
             method=self.config.method,
             wavelengths=len(self.kwargs["wavelengths"]) if 'spectral' in self.config.method else 0,
             num_classes=self.kwargs["num_classes"],
@@ -207,7 +209,7 @@ class UMHSModel(NGPModel):
         )
 
 
-        #self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+        self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
         #self.collider = AABBBoxCollider(self.scene_box)
 
         # self.cluster_probe = ClusterLookup(128+len(self.kwargs["wavelengths"]), self.kwargs["num_classes"])

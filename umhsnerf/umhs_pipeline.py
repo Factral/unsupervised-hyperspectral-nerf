@@ -113,9 +113,9 @@ class UMHSPipeline(VanillaPipeline):
             dist.barrier(device_ids=[local_rank])
 
         # random permutate endmembers in model with torch
-        self.model.field.endmembers
+        #self.model.field.endmembers
 
-
+    #autocast is needed when using tcnn https://github.com/NVlabs/tiny-cuda-nn/issues/377
     @profiler.time_function
     def get_eval_loss_dict(self, step: int) -> Tuple[Any, Dict[str, Any], Dict[str, Any]]:
         """This function gets your evaluation loss dict. It needs to get the data
@@ -124,8 +124,8 @@ class UMHSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
-        #autocast is needed when using tcnn https://github.com/NVlabs/tiny-cuda-nn/issues/377
-        with torch.autocast(device_type="cuda", enabled=True):
+        
+        with torch.autocast(device_type="cuda", enabled=self.config.mixed_precision):
             self.eval()
             ray_bundle, batch = self.datamanager.next_eval(step)
             model_outputs = self.model(ray_bundle)
@@ -134,7 +134,7 @@ class UMHSPipeline(VanillaPipeline):
             self.train()
         return model_outputs, loss_dict, metrics_dict
 
-
+    #autocast is needed when using tcnn https://github.com/NVlabs/tiny-cuda-nn/issues/377
     @profiler.time_function
     def get_eval_image_metrics_and_images(self, step: int):
         """This function gets your evaluation loss dict. It needs to get the data
@@ -143,7 +143,7 @@ class UMHSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
-        with torch.autocast(device_type="cuda", enabled=True):
+        with torch.autocast(device_type="cuda", enabled=self.config.mixed_precision):
             self.eval()
             camera, batch = self.datamanager.next_eval_image(step)
             outputs = self.model.get_outputs_for_camera(camera)

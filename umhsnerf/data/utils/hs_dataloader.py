@@ -14,6 +14,8 @@ import os
 from skimage import segmentation
 
 from umhsnerf.data.utils.vca import vca
+from nerfstudio.utils.rich_utils import CONSOLE
+
 
 from PIL import Image
 
@@ -39,14 +41,19 @@ class HyperspectralDataset(InputDataset):
         self.hs_filenames = self.metadata["hs_filenames"]
         self.dino_filenames = self.metadata.get("dino_filenames", None)
         self.seg_filenames = self.metadata.get("seg_filenames", None)
+        self.num_classes = self.metadata["num_classes"]
 
     def get_metadata(self, data: Dict) -> Dict:
         filepath = self.hs_filenames[data["image_idx"]]
 
         hs_image = np.load(filepath) # H, W, B 
         hs_image = torch.tensor(hs_image).float().clamp(0, 1)
+    
+        if not os.path.exists("vca.npy"):
+            Ae, indice, Yp = vca(hs_image.permute(2,0,1).reshape(hs_image.shape[2], -1).numpy(), self.num_classes)
+            np.save("vca.npy", Ae.T)
+            CONSOLE.log("VCA saved to vca.npy")
 
-        #load the image from the path, the image is png, load it in uint8
         if self.seg_filenames is not None:
             seg_image = Image.open(self.seg_filenames[data["image_idx"]])
             seg_image = torch.tensor(np.array(seg_image))
@@ -60,10 +67,8 @@ class HyperspectralDataset(InputDataset):
             # normalize dino_feat along unit sphere
             #dino_feat = dino_feat / torch.norm(dino_feat, dim=-1, keepdim=True)
 
-            return {"hs_image": hs_image, "dino_feat": dino_feat, "seg_image": seg_image}
+            return {"hs_image": hs_image, "dino_feat": dino_feat}
 
-        if not os.path.exists("vca.npy"):
-            pass
 
 
         return {"hs_image": hs_image}

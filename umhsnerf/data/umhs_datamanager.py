@@ -42,7 +42,6 @@ from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler
 from functools import cached_property
 
 from umhsnerf.data.umhs_dataparser import UMHSDataParserConfig
-from umhsnerf.data.utils.dino_dataloader import DinoDataloader
 
 
 CustomDataParserUnion = Union[UMHSDataParserConfig, AnnotatedDataParserUnion]
@@ -90,12 +89,7 @@ class UMHSDataManager(VanillaDataManager, Generic[TDataset]):
 
             cache_dir = f"outputs/{self.config.dataparser.data.name}"
             dino_cache_path = Path(osp.join(cache_dir, "dino.npy"))
-            self.dino_dataloader = DinoDataloader(
-                image_list=images,
-                device=self.device,
-                cfg={"image_shape": list(images.shape[2:4])},
-                cache_path=dino_cache_path,
-            )
+
 
 
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:

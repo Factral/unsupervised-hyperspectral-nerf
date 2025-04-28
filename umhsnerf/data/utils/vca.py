@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import sys
 import numpy as np
+import scipy as sp
 
 
 #############################################
@@ -20,7 +21,7 @@ def estimate_snr(Y,r_m,x):
 
 
 
-def vca(Y,R,verbose = True,snr_input = 0):
+def vca(Y,R,verbose = False,snr_input = 0):
 # Vertex Component Analysis
 #
 # Ae, indice, Yp = vca(Y,R,verbose = True,snr_input = 0)

@@ -2,7 +2,6 @@
 
 ```
 conda activate nerfstudio
-cd umhsnerf
 pip install -e .
 ```
 

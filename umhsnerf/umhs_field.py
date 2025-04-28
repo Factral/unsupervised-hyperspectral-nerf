@@ -58,6 +58,9 @@ class UMHSField(NerfactoField):
         self.pred_specular = pred_specular
         self.average_init_density = 1
 
+        print("implementation", implementation)
+
+
         if self.method == "spectral" or self.method == "rgb+spectral":
             # Semantic field for abundance prediction
             input_dim = self.position_encoding.get_out_dim() + self.geo_feat_dim
@@ -173,10 +176,7 @@ class UMHSField(NerfactoField):
                         (*directions.shape[:-1], self.appearance_embedding_dim), device=directions.device
                     )
 
-
-        # Spectral prediction using semantic unmixing
         if "spectral" in self.method:
-
 
             positions =  ray_samples.frustums.get_positions()
             positions_flat = self.position_encoding(positions.view(-1, 3))
@@ -226,9 +226,7 @@ class UMHSField(NerfactoField):
 
             endmembers = self.endmembers.unsqueeze(0).unsqueeze(0)
     
-            endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3)
-
-            scalar = F.sigmoid(scalar)
+            endmembers = endmembers.expand(abundances.shape[0], abundances.shape[1], -1, -1).transpose(2,3).squeeze(0)
 
             if self.use_scalar:
                 adapted_endmembers = scalar * endmembers  # (B, ray_sample, wavelengths, num_classes)

@@ -1,1 +1,12 @@
-CUDA_VISIBLE_DEVICES=2 /home/perezpnf/miniconda3/envs/unmix/bin/ns-train umhsnerf --steps_per_save 1000 --save_only_latest_checkpoint False --machine.seed 42 --log-gradients True --pipeline.num_classes 10 --pipeline.model.far-plane 1000 --pipeline.model.near_plane 0.05 --pipeline.model.background-color random --pipeline.model.spectral_loss_weight 5.0 --pipeline.model.temperature 0.4 --pipeline.model.pred_dino False --pipeline.model.pred_specular False --pipeline.model.load_vca False --pipeline.datamanager.images-on-gpu True --pipeline.datamanager.patch-size 1 --pipeline.datamanager.train-num-rays-per-batch 8192 --pipeline.model.method rgb+spectral --data data/processed/ajar --experiment-name ajar-t0.4-k2 --vis viewer+wandb --viewer.websocket-port 7007
+CUDA_VISIBLE_DEVICES=0 ns-train umhsnerf --steps_per_save 1000 \
+ --save_only_latest_checkpoint False \
+ --machine.seed 42 --log-gradients True \
+ --pipeline.num_classes 10 --pipeline.model.far-plane 1000 \
+ --pipeline.model.near_plane 0.05 --pipeline.model.background-color random \
+ --pipeline.model.spectral_loss_weight 5.0 --pipeline.model.temperature 0.4 \
+ --pipeline.model.pred_dino False --pipeline.model.pred_specular True \
+ --pipeline.model.implementation tcnn \
+ --pipeline.model.load_vca True --pipeline.datamanager.images-on-gpu True \
+ --pipeline.datamanager.patch-size 1 --pipeline.datamanager.train-num-rays-per-batch 8192 \
+ --pipeline.model.method rgb+spectral --data data/processed/ajar \
+ --experiment-name ajar-t0.4-k2 --vis viewer --viewer.websocket-port 7007
