@@ -62,13 +62,13 @@ class ColourSystem(nn.Module):
     def __init__(self, bands, cs='sRGB', device='cuda'):
         super().__init__()
 
-        rgb_wavelengths = [620, 555, 503]
+        #rgb_wavelengths = [620, 555, 503]
 
-        nearest = np.array(bands).reshape(-1, 1) - np.array(rgb_wavelengths).reshape(1, -1)
-        self.nearest = torch.from_numpy(np.argmin(np.abs(nearest), axis=0)).to(device)
+        #nearest = np.array(bands).reshape(-1, 1) - np.array(rgb_wavelengths).reshape(1, -1)
+        #self.nearest = torch.from_numpy(np.argmin(np.abs(nearest), axis=0)).to(device)
 
-        white = np.array([176.90352, 94.22424, 101.18808]) / 255.0
-        self.white = torch.from_numpy(white).to(device).float()
+        #white = np.array([176.90352, 94.22424, 101.18808]) / 255.0
+        #self.white = torch.from_numpy(white).to(device).float()
 
         bands = np.array(bands) * 10
         cmf = np.array([component_x(bands), component_y(bands), component_z(bands)])

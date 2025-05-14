@@ -36,7 +36,7 @@ umhs_method = MethodSpecification(
         method_name="umhsnerf",
         steps_per_eval_batch=500,
         steps_per_save=2000,
-        max_num_iterations=20000,
+        max_num_iterations=30000,
         mixed_precision=True,
         save_only_latest_checkpoint=False,
         pipeline=UMHSPipelineConfig(
@@ -44,7 +44,7 @@ umhs_method = MethodSpecification(
                 _target=UMHSDataManager[HyperspectralDataset],
                 dataparser=UMHSDataParserConfig(),
                 train_num_rays_per_batch=9216*4,
-                eval_num_rays_per_batch=9216,
+                eval_num_rays_per_batch=4096,
             ),
             model=UMHSConfig(
                 eval_num_rays_per_chunk=512,
@@ -58,8 +58,8 @@ umhs_method = MethodSpecification(
         ),
         optimizers={
             "fields": {
-                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+                "optimizer": AdamOptimizerConfig(lr=2e-2, eps=1e-15),
+                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.00001, max_steps=30000),
             },
         }, 
         viewer=ViewerConfig(num_rays_per_chunk=1 << 12),

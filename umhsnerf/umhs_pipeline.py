@@ -125,7 +125,7 @@ class UMHSPipeline(VanillaPipeline):
             step: current iteration step
         """
         
-        with torch.autocast(device_type="cuda", enabled=self.config.mixed_precision):
+        with torch.autocast(device_type="cuda", enabled=True):
             self.eval()
             ray_bundle, batch = self.datamanager.next_eval(step)
             model_outputs = self.model(ray_bundle)
@@ -143,7 +143,7 @@ class UMHSPipeline(VanillaPipeline):
         Args:
             step: current iteration step
         """
-        with torch.autocast(device_type="cuda", enabled=self.config.mixed_precision):
+        with torch.autocast(device_type="cuda", enabled=True):
             self.eval()
             camera, batch = self.datamanager.next_eval_image(step)
             outputs = self.model.get_outputs_for_camera(camera)

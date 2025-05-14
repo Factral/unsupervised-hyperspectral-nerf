@@ -224,6 +224,9 @@ class UMHSDataParser(DataParser):
                 hs_fname = self._get_fname(hs_filepath, data_dir, downsample_folder_prefix="hs_")
                 hs_filenames.append(hs_fname)
 
+                if os.path.exists("vca.npy"):
+                    os.remove("vca.npy")
+
             if "dino_file_path" in frame:
                 dino_filepath = Path(frame["dino_file_path"])
                 dino_fname = self._get_fname(dino_filepath, data_dir, downsample_folder_prefix="dino_")

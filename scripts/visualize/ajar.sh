@@ -1,0 +1,2 @@
+CUDA_VISIBLE_DEVICES=0 ns-viewer --load-config  outputs/ajar-t0.4-k7/umhsnerf/2025-03-08_001228/config.yml
+#CUDA_VISIBLE_DEVICES=0 ns-viewer --load-config  outputs/ajar-t0.4-k10/umhsnerf/2025-05-13_074418/config.yml

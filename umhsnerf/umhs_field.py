@@ -47,8 +47,6 @@ class UMHSField(NerfactoField):
         load_vca: bool = False,
         **kwargs,
     ) -> None:
-        print(kwargs["appearance_embedding_dim"])
-
         super().__init__(aabb=aabb, num_images=num_images,implementation=implementation, **kwargs)
 
         self.method = method

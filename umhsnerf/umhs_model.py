@@ -370,8 +370,8 @@ class UMHSModel(NGPModel):
             loss_dict["rgb_loss"] = self.config.rgb_loss_weight * self.rgb_loss(pred_rgb, gt_rgb)
             #loss_dict["seg_loss"] = -(outputs["seg_probs"] * outputs["inner_products"]).sum(1).mean()
                 
-            if self.config.pred_specular:
-                loss_dict["spectral_loss2"] = 1 * self.spectral_loss(pred_spectral2, gt_spectral)
+            #if self.config.pred_specular:
+            #    loss_dict["spectral_loss2"] = 1 * self.spectral_loss(pred_spectral2, gt_spectral)
 
             #loss_dict["seg_loss"] = self.seg_loss(outputs["seg_probs"], seg_image.long().to(self.device))
 
@@ -493,18 +493,19 @@ class UMHSModel(NGPModel):
             #save the seg_pred directly as image uint8
             #get filename
             self.i = self.i + 1
-            FOLDER = 'cbox_sphere'
+            FOLDER = 'ajar_final'
             filename = f"./eval/{FOLDER}/seg_pred_{self.i}.png"
-            print(filename)
-            #import pdb; pdb.set_trace()
             seg_pred = outputs["seg_raw"].cpu().numpy().astype(np.uint8)
-            # also save a color version in a subfolder called color
             color_seg_pred = outputs["seg_pred"].cpu().numpy()
-            #import pdb; pdb.set_trace()
-            print(seg_pred.shape)
             writeStatus= cv2.imwrite(filename, seg_pred.squeeze())
-            print(writeStatus)
             cv2.imwrite(f"./eval/{FOLDER}/color/{self.i}.png", color_seg_pred*255)
+
+            # save each abundance
+            #for i in range(outputs["seg_probs"].shape[1]):
+            #    seg_pred = outputs[f"abundances_{i}"].cpu().numpy().astype(np.uint8)
+            #    color_seg_pred = outputs[f"abundances_{i}"].cpu().numpy()
+            #    writeStatus= cv2.imwrite(f"./eval/{FOLDER}/abundances_{i}_{self.i}.png", seg_pred.squeeze())
+            #    cv2.imwrite(f"./eval/{FOLDER}/color_abundances/{self.i}_{i}.png", color_seg_pred*255)
     
         images_dict = {"img": combined_rgb, "accumulation": combined_acc, "depth": combined_depth, "se_per_pixel": se_per_pixel}
 
