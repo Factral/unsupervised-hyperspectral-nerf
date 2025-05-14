@@ -7,6 +7,7 @@ from typing import Literal, Optional, Any, Dict, Tuple
 import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
+import os
 
 from nerfstudio.fields.nerfacto_field import NerfactoField
 from nerfstudio.cameras.rays import RaySamples
@@ -75,8 +76,11 @@ class UMHSField(NerfactoField):
 
             if self.training:
                 if load_vca:
-                    endmembers = np.load("vca.npy")
-                    self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32, requires_grad=True))
+                    if  os.path.exists("vca.npy"):
+                        endmembers = np.load("vca.npy")
+                        self.endmembers = nn.Parameter(torch.tensor(endmembers, dtype=torch.float32, requires_grad=True))
+                    else:
+                        self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
                 else:
                     self.endmembers = nn.Parameter(torch.randn(self.num_classes, self.wavelengths), requires_grad=True)
             else:

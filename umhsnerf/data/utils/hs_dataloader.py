@@ -50,9 +50,12 @@ class HyperspectralDataset(InputDataset):
         hs_image = torch.tensor(hs_image).float().clamp(0, 1)
     
         if not os.path.exists("vca.npy"):
-            Ae, indice, Yp = vca(hs_image.permute(2,0,1).reshape(hs_image.shape[2], -1).numpy(), self.num_classes)
-            np.save("vca.npy", Ae.T)
-            CONSOLE.log("VCA saved to vca.npy")
+            try:
+                Ae, indice, Yp = vca(hs_image.permute(2,0,1).reshape(hs_image.shape[2], -1).numpy(), self.num_classes)
+                np.save("vca.npy", Ae.T)
+                CONSOLE.log("VCA saved to vca.npy")
+            except Exception as e:
+                pass
 
         if self.seg_filenames is not None:
             seg_image = Image.open(self.seg_filenames[data["image_idx"]])

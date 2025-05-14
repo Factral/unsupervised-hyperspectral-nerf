@@ -1,3 +1,3 @@
-ns-viewer --load-config outputs/caladium-t0.7-k4/umhsnerf/2025-03-07_140516/config.yml
+CUDA_VISIBLE_DEVICES=0 ns-viewer --load-config outputs/caladium-t0.7-k4/umhsnerf/2025-03-07_140516/config.yml --viewer.max-num-display-images 1
 
-#ns-render camera-path --load-config outputs/caladium-t0.7-k4/umhsnerf/2025-03-07_140516/config.yml --camera-path-filename /home/perezpnf/unsupervised-hyperspectral-nerf/data/hsnerf/bayspec/caladium/processed_dataset/camera_paths/2025-03-07-20-07-39.json --output-path renders/processed_dataset/2025-03-07-20-07-39.mp4 
+#CUDA_VISIBLE_DEVICES=0 ns-render camera-path --load-config outputs/caladium-t0.7-k4/umhsnerf/2025-03-07_140516/config.yml --camera-path-filename /home/perezpnf/unsupervised-hyperspectral-nerf/data/hsnerf/bayspec/caladium/processed_dataset/camera_paths/2025-03-07-20-07-39.json --output-path renders/processed_dataset/2025-03-07-20-07-39.mp4 
